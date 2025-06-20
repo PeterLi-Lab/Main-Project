@@ -56,20 +56,100 @@ pip install -r requirements.txt
 
 ## Usage
 
-Run the main analysis script:
+### Basic Usage
+Run the complete analysis pipeline:
 ```bash
 python main.py
 ```
 
-The script will:
-1. Load and preprocess Stack Overflow data
-2. Perform feature engineering and text embeddings
-3. Extract TF-IDF features from titles and tags
-4. Create visualizations for data exploration
-5. Perform K-means clustering with optimal cluster selection
-6. Perform DBSCAN clustering with adaptive parameters
-7. Compare clustering algorithms and show quality metrics
-8. Analyze cluster characteristics and provide insights
+### Advanced Usage with Command Line Arguments
+
+The script supports different modes and parameters:
+
+```bash
+# Run complete pipeline (default)
+python main.py --mode full
+
+# Run only data preprocessing and save results
+python main.py --mode preprocess
+
+# Run only clustering analysis (requires preprocessed data)
+python main.py --mode cluster
+
+# Run only visualizations (requires preprocessed data)
+python main.py --mode visualize
+
+# Force reprocessing even if cached data exists
+python main.py --mode full --force-reprocess
+
+# Specify custom parameters
+python main.py --mode full --n-clusters 10 --max-features 2000 --n-components 150
+```
+
+### Command Line Arguments
+
+| Argument | Short | Default | Description |
+|----------|-------|---------|-------------|
+| `--mode` | `-m` | `full` | Analysis mode: `full`, `preprocess`, `cluster`, `visualize` |
+| `--data-dir` | `-d` | `data` | Directory containing XML data files |
+| `--output-dir` | `-o` | `output` | Directory to save/load processed data |
+| `--force-reprocess` | `-f` | `False` | Force reprocessing even if cached data exists |
+| `--max-features` | `-mf` | `1000` | Maximum number of TF-IDF features |
+| `--n-components` | `-nc` | `100` | Number of TF-IDF components after SVD |
+| `--n-clusters` | `-k` | `None` | Number of clusters for K-means (auto-determined if not specified) |
+
+### Workflow Examples
+
+**First time setup:**
+```bash
+# Run complete preprocessing and save results
+python main.py --mode preprocess
+```
+
+**Subsequent runs:**
+```bash
+# Run clustering with different parameters
+python main.py --mode cluster --n-clusters 15
+
+# Run visualizations only
+python main.py --mode visualize
+
+# Run complete pipeline (will use cached data if available)
+python main.py --mode full
+```
+
+**Force reprocessing:**
+```bash
+# Force complete reprocessing
+python main.py --mode full --force-reprocess
+```
+
+### Processing Pipeline
+
+The script follows this processing pipeline:
+
+1. **Data Loading**: Parse XML files from the data directory
+2. **Data Cleaning**: Remove duplicates, handle missing values, merge datasets
+3. **Feature Engineering**: Create derived variables and categorical features
+4. **TF-IDF Extraction**: Extract TF-IDF features from titles and tags with dimensionality reduction
+5. **Semantic Embeddings**: Generate sentence embeddings using transformers
+6. **Clustering Analysis**: Perform K-means and DBSCAN clustering
+7. **Quality Assessment**: Calculate clustering quality metrics
+8. **Visualization**: Generate comprehensive plots and charts
+
+### Caching System
+
+The script implements a caching system to avoid reprocessing:
+
+- **First run**: Complete preprocessing and saves results to `output/` directory
+- **Subsequent runs**: Loads cached data and skips preprocessing
+- **Force reprocess**: Use `--force-reprocess` flag to regenerate all data
+
+Cached files include:
+- `df_combined.pkl`: Processed dataframe
+- `embeddings.pkl`: Sentence embeddings
+- `tfidf_features.pkl`: TF-IDF features
+- `sentence_model.pkl`: Trained sentence transformer model
 
 ## Dependencies
 

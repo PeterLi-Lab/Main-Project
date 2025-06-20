@@ -105,3 +105,6 @@ Thumbs.db
 data/Posts.xml
 data/
 data/
+output/
+*.pkl
+*.pickle
