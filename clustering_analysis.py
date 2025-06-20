@@ -26,38 +26,26 @@ class ClusteringAnalyzer:
         # Suppress sklearn deprecation warnings
         warnings.filterwarnings('ignore', category=FutureWarning, module='sklearn')
         
-        # First, find optimal number of components to retain variance_threshold of variance
         print(f"Finding optimal number of components to retain {variance_threshold*100}% variance...")
-        
-        # Fit PCA with all components to get explained variance
-        pca_full = PCA(random_state=42)
-        pca_full.fit(self.embeddings)
-        
-        # Calculate cumulative explained variance
-        cumulative_variance = np.cumsum(pca_full.explained_variance_ratio_)
-        
-        # Find minimum number of components to retain variance_threshold
-        optimal_components = np.argmax(cumulative_variance >= variance_threshold) + 1
-        
-        # Ensure we don't go below minimum or above maximum reasonable values
-        min_components = 10  # Minimum reasonable for clustering
-        max_components = min(100, self.embeddings.shape[1])  # Maximum reasonable
-        optimal_components = max(min_components, min(optimal_components, max_components))
-        
         print(f"Original dimensions: {self.embeddings.shape[1]}")
+        
+        # Use PCA with variance_threshold directly
+        self.pca_50d = PCA(n_components=variance_threshold, random_state=42)
+        embeddings_50d = self.pca_50d.fit_transform(self.embeddings)
+        
+        optimal_components = embeddings_50d.shape[1]
         print(f"Optimal components for {variance_threshold*100}% variance: {optimal_components}")
-        print(f"Actual variance retained: {cumulative_variance[optimal_components-1]:.3f}")
+        print(f"Actual variance retained: {self.pca_50d.explained_variance_ratio_.sum():.3f}")
         
         # Use optimal components for clustering (but cap at n_components_50d if specified)
         clustering_components = min(optimal_components, n_components_50d)
         if clustering_components < optimal_components:
             print(f"Using {clustering_components} components (capped at {n_components_50d})")
+            # Re-fit PCA with capped components
+            self.pca_50d = PCA(n_components=clustering_components, random_state=42)
+            embeddings_50d = self.pca_50d.fit_transform(self.embeddings)
         else:
             print(f"Using {clustering_components} components for clustering")
-        
-        # First, reduce to optimal dimensions for clustering
-        self.pca_50d = PCA(n_components=clustering_components, random_state=42)
-        embeddings_50d = self.pca_50d.fit_transform(self.embeddings)
         
         print(f"Reduced from {self.embeddings.shape[1]} dimensions to {clustering_components} dimensions")
         print(f"Explained variance ratio: {self.pca_50d.explained_variance_ratio_.sum():.3f}")
@@ -69,14 +57,17 @@ class ClusteringAnalyzer:
         print(f"Further reduced to {n_components_2d} dimensions for visualization")
         
         # Plot variance explained curve
-        self.plot_variance_explained_curve(pca_full, optimal_components, variance_threshold)
+        self.plot_variance_explained_curve(optimal_components, variance_threshold)
         
         return embeddings_50d, self.reduced_embeddings_2d
     
-    def plot_variance_explained_curve(self, pca_full, optimal_components, variance_threshold):
+    def plot_variance_explained_curve(self, optimal_components, variance_threshold):
         """Plot the variance explained curve"""
         print("\n=== Plotting Variance Explained Curve ===")
         
+        # Fit PCA with all components to get explained variance for plotting
+        pca_full = PCA(random_state=42)
+        pca_full.fit(self.embeddings)
         cumulative_variance = np.cumsum(pca_full.explained_variance_ratio_)
         
         plt.figure(figsize=(12, 5))
