@@ -35,11 +35,11 @@ class DataPreprocessor:
         """Load all XML data files"""
         print("=== Loading Data Files ===")
         
-        self.df_posts = self.parse_xml(os.path.join(self.base_path, 'data', 'Posts.xml'))
-        self.df_users = self.parse_xml(os.path.join(self.base_path, 'data', 'Users.xml'))
-        self.df_tags = self.parse_xml(os.path.join(self.base_path, 'data', 'Tags.xml'))
-        self.df_votes = self.parse_xml(os.path.join(self.base_path, 'data', 'Votes.xml'))
-        self.df_badges = self.parse_xml(os.path.join(self.base_path, 'data', 'Badges.xml'))
+        self.df_posts = self.parse_xml(os.path.join(self.base_path, 'Posts.xml'))
+        self.df_users = self.parse_xml(os.path.join(self.base_path, 'Users.xml'))
+        self.df_tags = self.parse_xml(os.path.join(self.base_path, 'Tags.xml'))
+        self.df_votes = self.parse_xml(os.path.join(self.base_path, 'Votes.xml'))
+        self.df_badges = self.parse_xml(os.path.join(self.base_path, 'Badges.xml'))
         
         print(f"Loaded {len(self.df_posts)} posts, {len(self.df_users)} users, {len(self.df_tags)} tags")
         
@@ -129,7 +129,7 @@ class DataPreprocessor:
         
         # Comment count (if available)
         try:
-            df_comments = self.parse_xml(os.path.join(self.base_path, 'data', 'Comments.xml'))
+            df_comments = self.parse_xml(os.path.join(self.base_path, 'Comments.xml'))
             comment_counts = df_comments.groupby('PostId').size().reset_index()
             comment_counts.columns = ['PostId', 'comment_count']
             self.df_combined = self.df_combined.merge(comment_counts, left_on='Id_x', right_on='PostId', how='left')
