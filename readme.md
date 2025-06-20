@@ -19,24 +19,38 @@ This project performs comprehensive analysis of Stack Overflow data using machin
 ├── main.py                 # Main orchestration script
 ├── data_preprocessing.py   # Data loading, cleaning, and feature engineering
 ├── clustering_analysis.py  # Clustering algorithms and analysis
-├── chatgpt_analyzer.py     # ChatGPT-based quality analysis (currently disabled)
-├── data/                   # XML data files
+├── chatgpt_analyzer.py     # ChatGPT-based quality analysis (optional)
 ├── requirements.txt        # Python dependencies
-└── README.md              # This file
+├── README.md              # Project documentation
+└── data/                  # Data directory (not included in repo)
+    ├── Posts.xml
+    ├── Users.xml
+    ├── Comments.xml
+    └── ...
 ```
 
 ## Installation
 
-1. Clone the repository
+1. Clone the repository:
+```bash
+git clone <repository-url>
+cd Main-Project
+```
+
 2. Create a virtual environment:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
 3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+```bash
+pip install -r requirements.txt
+```
+
+4. Prepare your data:
+   - Place Stack Overflow XML files in the `data/` directory
+   - Required files: `Posts.xml`, `Users.xml`, `Comments.xml`, etc.
 
 ## Usage
 
@@ -45,13 +59,43 @@ Run the main analysis script:
 python main.py
 ```
 
-This will:
-1. Load and preprocess Stack Overflow XML data
-2. Generate text embeddings for semantic analysis
-3. Perform K-means clustering with optimal cluster selection
-4. Perform DBSCAN clustering with adaptive parameters
-5. Compare clustering results and generate visualizations
-6. Display quality metrics for both algorithms
+The script will:
+1. Load and preprocess Stack Overflow data
+2. Perform feature engineering and text embeddings
+3. Create visualizations for data exploration
+4. Perform K-means clustering with optimal cluster selection
+5. Perform DBSCAN clustering with adaptive parameters
+6. Compare clustering algorithms and show quality metrics
+7. Analyze cluster characteristics and provide insights
+
+## Dependencies
+
+- **numpy**: Numerical computing
+- **pandas**: Data manipulation and analysis
+- **matplotlib & seaborn**: Data visualization
+- **scikit-learn**: Machine learning algorithms (K-means, DBSCAN)
+- **scipy**: Scientific computing
+- **sentence-transformers**: Text embeddings
+- **torch**: Deep learning framework
+- **transformers**: Hugging Face transformers library
+- **huggingface-hub**: Model hub integration
+- **tqdm**: Progress bars
+- **requests**: HTTP library
+
+## Key Features
+
+### Clustering Algorithms
+- **K-means**: Centroid-based clustering with optimal cluster number selection
+- **DBSCAN**: Density-based clustering with adaptive parameter estimation
+
+### Adaptive Parameter Selection
+- The project uses adaptive parameter estimation for DBSCAN
+- K-means cluster number is determined based on data size and characteristics
+
+### Quality Metrics
+- Silhouette score for clustering quality assessment
+- Cluster size distribution analysis
+- Noise point analysis for DBSCAN
 
 ## Data Requirements
 
@@ -62,29 +106,17 @@ Place your Stack Overflow XML files in the `data/` directory. The script expects
 - `Badges.xml`
 - etc.
 
+**Note**: Data files are not included in this repository due to size limitations. Please download the Stack Overflow data dump separately.
+
 ## Output
 
 The analysis generates:
 - Data preprocessing visualizations
-- Clustering results with quality metrics
-- Comparison plots between K-means and DBSCAN
+- Cluster comparison plots
+- Quality metrics comparison
 - Cluster characteristic analysis
-- Performance metrics and statistics
+- Sample titles from each cluster
 
-## Dependencies
+## Contributing
 
-- numpy: Numerical computing
-- pandas: Data manipulation
-- matplotlib & seaborn: Visualization
-- scikit-learn: Machine learning algorithms
-- sentence-transformers: Text embeddings
-- torch: Deep learning framework
-- hdbscan: Density-based clustering
-- transformers: Hugging Face transformers library
-
-## Notes
-
-- The ChatGPT analysis component is currently disabled
-- The project uses adaptive parameter estimation for DBSCAN
-- All visualizations are automatically saved and displayed
-- The modular design allows easy extension and modification
+Feel free to submit issues and enhancement requests!
