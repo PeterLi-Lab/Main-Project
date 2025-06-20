@@ -5,7 +5,9 @@ This project performs comprehensive analysis of Stack Overflow data using machin
 ## Features
 
 - **Data Preprocessing**: XML parsing, cleaning, and feature engineering
-- **Semantic Analysis**: Text embeddings using sentence transformers
+- **Text Feature Extraction**: 
+  - TF-IDF features from titles and tags with dimensionality reduction
+  - Semantic embeddings using sentence transformers
 - **Clustering Analysis**: 
   - K-means clustering with optimal cluster selection
   - DBSCAN clustering with adaptive parameter estimation
@@ -62,11 +64,12 @@ python main.py
 The script will:
 1. Load and preprocess Stack Overflow data
 2. Perform feature engineering and text embeddings
-3. Create visualizations for data exploration
-4. Perform K-means clustering with optimal cluster selection
-5. Perform DBSCAN clustering with adaptive parameters
-6. Compare clustering algorithms and show quality metrics
-7. Analyze cluster characteristics and provide insights
+3. Extract TF-IDF features from titles and tags
+4. Create visualizations for data exploration
+5. Perform K-means clustering with optimal cluster selection
+6. Perform DBSCAN clustering with adaptive parameters
+7. Compare clustering algorithms and show quality metrics
+8. Analyze cluster characteristics and provide insights
 
 ## Dependencies
 
@@ -112,6 +115,7 @@ Place your Stack Overflow XML files in the `data/` directory. The script expects
 
 The analysis generates:
 - Data preprocessing visualizations
+- TF-IDF feature importance and distribution plots
 - Cluster comparison plots
 - Quality metrics comparison
 - Cluster characteristic analysis

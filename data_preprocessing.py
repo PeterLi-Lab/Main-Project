@@ -5,6 +5,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sentence_transformers import SentenceTransformer
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.decomposition import TruncatedSVD
+import re
 
 class DataPreprocessor:
     def __init__(self, base_path=None):
@@ -18,6 +21,9 @@ class DataPreprocessor:
         self.df_combined = None
         self.embeddings = None
         self.model = None
+        self.tfidf_features = None
+        self.tfidf_vectorizer = None
+        self.tfidf_svd = None
         
     def parse_xml(self, path):
         """Parse XML file and return DataFrame"""
@@ -203,6 +209,86 @@ class DataPreprocessor:
         print("Categorical variables created successfully")
         return self.df_combined
     
+    def clean_text_for_tfidf(self, text):
+        """Clean text for TF-IDF processing"""
+        if pd.isna(text):
+            return ""
+        
+        # Convert to string and lowercase
+        text = str(text).lower()
+        
+        # Remove HTML tags
+        text = re.sub(r'<[^>]+>', '', text)
+        
+        # Remove special characters but keep spaces
+        text = re.sub(r'[^\w\s]', ' ', text)
+        
+        # Remove extra whitespace
+        text = re.sub(r'\s+', ' ', text).strip()
+        
+        return text
+    
+    def create_tfidf_features(self, max_features=1000, n_components=100):
+        """Create TF-IDF features from titles and tags"""
+        print("\n=== Creating TF-IDF Features ===")
+        
+        # Prepare text data for TF-IDF
+        titles = self.df_combined['Title'].fillna('').apply(self.clean_text_for_tfidf)
+        tags = self.df_combined['Tags'].fillna('').apply(self.clean_text_for_tfidf)
+        
+        # Combine titles and tags for richer features
+        combined_text = titles + ' ' + tags
+        
+        print(f"Processing {len(combined_text)} documents for TF-IDF...")
+        
+        # Create TF-IDF vectorizer
+        self.tfidf_vectorizer = TfidfVectorizer(
+            max_features=max_features,
+            min_df=2,  # Minimum document frequency
+            max_df=0.95,  # Maximum document frequency (remove very common words)
+            ngram_range=(1, 2),  # Use unigrams and bigrams
+            stop_words='english',
+            lowercase=True,
+            strip_accents='unicode'
+        )
+        
+        # Fit and transform
+        tfidf_matrix = self.tfidf_vectorizer.fit_transform(combined_text)
+        
+        print(f"TF-IDF matrix shape: {tfidf_matrix.shape}")
+        print(f"Vocabulary size: {len(self.tfidf_vectorizer.vocabulary_)}")
+        
+        # Apply TruncatedSVD for dimensionality reduction
+        self.tfidf_svd = TruncatedSVD(n_components=n_components, random_state=42)
+        self.tfidf_features = self.tfidf_svd.fit_transform(tfidf_matrix)
+        
+        # Calculate explained variance
+        explained_variance = self.tfidf_svd.explained_variance_ratio_.sum()
+        print(f"TF-IDF + SVD explained variance: {explained_variance:.3f}")
+        
+        # Add TF-IDF features to dataframe
+        tfidf_df = pd.DataFrame(self.tfidf_features, 
+                               columns=[f'tfidf_{i}' for i in range(n_components)])
+        
+        # Reset index to ensure alignment
+        tfidf_df.index = self.df_combined.index
+        self.df_combined = pd.concat([self.df_combined, tfidf_df], axis=1)
+        
+        # Add TF-IDF statistics
+        self.df_combined['tfidf_mean'] = tfidf_df.mean(axis=1)
+        self.df_combined['tfidf_std'] = tfidf_df.std(axis=1)
+        self.df_combined['tfidf_max'] = tfidf_df.max(axis=1)
+        self.df_combined['tfidf_min'] = tfidf_df.min(axis=1)
+        
+        # Show top features
+        feature_names = self.tfidf_vectorizer.get_feature_names_out()
+        top_features_idx = np.argsort(self.tfidf_svd.components_[0])[-10:]
+        top_features = [feature_names[i] for i in top_features_idx]
+        print(f"Top 10 TF-IDF features: {top_features}")
+        
+        print(f"TF-IDF features created successfully with shape: {self.tfidf_features.shape}")
+        return self.tfidf_features
+    
     def create_semantic_embeddings(self):
         """Create semantic embeddings for titles"""
         print("\n=== Creating Semantic Embeddings ===")
@@ -308,6 +394,73 @@ class DataPreprocessor:
         plt.tight_layout()
         plt.show()
     
+    def visualize_tfidf_features(self):
+        """Create visualizations for TF-IDF features"""
+        print("\n=== Visualizing TF-IDF Features ===")
+        
+        if self.tfidf_features is None:
+            print("TF-IDF features not available. Run create_tfidf_features() first.")
+            return
+        
+        plt.figure(figsize=(20, 12))
+        
+        # TF-IDF feature importance (first component)
+        plt.subplot(2, 3, 1)
+        feature_names = self.tfidf_vectorizer.get_feature_names_out()
+        top_features_idx = np.argsort(self.tfidf_svd.components_[0])[-15:]
+        top_features = [feature_names[i] for i in top_features_idx]
+        top_importance = self.tfidf_svd.components_[0][top_features_idx]
+        
+        plt.barh(range(len(top_features)), top_importance, color='skyblue')
+        plt.yticks(range(len(top_features)), top_features)
+        plt.title('Top 15 TF-IDF Features (Component 1)')
+        plt.xlabel('Feature Importance')
+        
+        # TF-IDF statistics distribution
+        plt.subplot(2, 3, 2)
+        plt.hist(self.df_combined['tfidf_mean'], bins=50, alpha=0.7, color='lightgreen', edgecolor='black')
+        plt.title('TF-IDF Mean Distribution')
+        plt.xlabel('Mean TF-IDF Value')
+        plt.ylabel('Frequency')
+        
+        plt.subplot(2, 3, 3)
+        plt.hist(self.df_combined['tfidf_std'], bins=50, alpha=0.7, color='lightcoral', edgecolor='black')
+        plt.title('TF-IDF Standard Deviation Distribution')
+        plt.xlabel('TF-IDF Standard Deviation')
+        plt.ylabel('Frequency')
+        
+        # TF-IDF vs engagement metrics
+        plt.subplot(2, 3, 4)
+        plt.scatter(self.df_combined['tfidf_mean'], np.log1p(self.df_combined['total_votes']), alpha=0.3, s=10)
+        plt.title('TF-IDF Mean vs Log(Total Votes + 1)')
+        plt.xlabel('TF-IDF Mean')
+        plt.ylabel('Log(Total Votes + 1)')
+        
+        # TF-IDF vs post length
+        plt.subplot(2, 3, 5)
+        plt.scatter(self.df_combined['tfidf_mean'], self.df_combined['post_length'], alpha=0.3, s=10)
+        plt.title('TF-IDF Mean vs Post Length')
+        plt.xlabel('TF-IDF Mean')
+        plt.ylabel('Post Length (words)')
+        plt.xlim(0, self.df_combined['tfidf_mean'].quantile(0.95))
+        plt.ylim(0, self.df_combined['post_length'].quantile(0.95))
+        
+        # Explained variance by components
+        plt.subplot(2, 3, 6)
+        explained_variance = self.tfidf_svd.explained_variance_ratio_
+        cumulative_variance = np.cumsum(explained_variance)
+        plt.plot(range(1, len(explained_variance) + 1), cumulative_variance, marker='o', linewidth=2)
+        plt.axhline(y=0.8, color='red', linestyle='--', label='80% Variance')
+        plt.axhline(y=0.9, color='orange', linestyle='--', label='90% Variance')
+        plt.title('Cumulative Explained Variance')
+        plt.xlabel('Number of Components')
+        plt.ylabel('Cumulative Explained Variance')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.show()
+    
     def print_summary_statistics(self):
         """Print summary statistics of the processed data"""
         print("\n=== Summary Statistics ===")
@@ -357,22 +510,29 @@ class DataPreprocessor:
         # Create categorical variables
         self.create_categorical_variables()
         
+        # Create TF-IDF features
+        self.create_tfidf_features()
+        
         # Create semantic embeddings
         self.create_semantic_embeddings()
         
         # Visualize results
         self.visualize_derived_variables()
         
+        # Visualize TF-IDF features
+        self.visualize_tfidf_features()
+        
         # Print summary
         self.print_summary_statistics()
         
         print("\n=== Data Preprocessing Complete ===")
-        return self.df_combined, self.embeddings, self.model
+        return self.df_combined, self.embeddings, self.tfidf_features, self.model
 
 if __name__ == "__main__":
     # Example usage
     preprocessor = DataPreprocessor()
-    df_combined, embeddings, model = preprocessor.preprocess_all()
+    df_combined, embeddings, tfidf_features, model = preprocessor.preprocess_all()
     
     print(f"\nFinal dataset shape: {df_combined.shape}")
-    print(f"Embeddings shape: {embeddings.shape}") 
+    print(f"Embeddings shape: {embeddings.shape}")
+    print(f"TF-IDF features shape: {tfidf_features.shape}") 

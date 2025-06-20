@@ -17,7 +17,7 @@ def main():
     print("="*50)
     
     preprocessor = DataPreprocessor()
-    df_combined, embeddings, model = preprocessor.preprocess_all()
+    df_combined, embeddings, tfidf_features, model = preprocessor.preprocess_all()
     
     # Step 2: Clustering Analysis (K-means + DBSCAN)
     print("\n" + "="*50)
@@ -58,6 +58,8 @@ def main():
     
     print(f"\n=== Analysis Complete ===")
     print(f"Total posts analyzed: {len(df_combined)}")
+    print(f"Embeddings shape: {embeddings.shape}")
+    print(f"TF-IDF features shape: {tfidf_features.shape}")
     
     # K-means summary
     print(f"\n--- K-means Clustering Summary ---")
@@ -79,6 +81,13 @@ def main():
     print(f"Average vote ratio: {df_combined['vote_ratio'].mean():.3f}")
     print(f"Average total votes: {df_combined['total_votes'].mean():.1f}")
     print(f"Most common post type: {df_combined['post_type'].mode().iloc[0] if len(df_combined['post_type'].mode()) > 0 else 'Unknown'}")
+    
+    # TF-IDF statistics
+    print(f"\n=== TF-IDF Statistics ===")
+    print(f"TF-IDF mean: {df_combined['tfidf_mean'].mean():.4f}")
+    print(f"TF-IDF std: {df_combined['tfidf_std'].mean():.4f}")
+    print(f"TF-IDF max: {df_combined['tfidf_max'].mean():.4f}")
+    print(f"TF-IDF min: {df_combined['tfidf_min'].mean():.4f}")
     
     # Show cluster distribution comparison
     print(f"\n=== Cluster Distribution Comparison ===")
@@ -106,6 +115,7 @@ def main():
     return {
         'df_combined': df_combined,
         'embeddings': embeddings,
+        'tfidf_features': tfidf_features,
         'clustering_results': clustering_results,
         'kmeans_quality': kmeans_quality,
         'dbscan_quality': dbscan_quality
