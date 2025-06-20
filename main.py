@@ -38,6 +38,10 @@ def parse_arguments():
                        type=int,
                        default=None,
                        help='Number of clusters for K-means (auto-determined if not specified)')
+    parser.add_argument('--variance-threshold', '-vt',
+                       type=float,
+                       default=0.9,
+                       help='Variance threshold for PCA (default: 0.9 = 90%%)')
     
     return parser.parse_args()
 
@@ -116,7 +120,8 @@ def run_clustering(args):
     # Run clustering
     cluster_analyzer = ClusteringAnalyzer(df_combined, embeddings)
     clustering_results = cluster_analyzer.perform_complete_clustering(
-        n_clusters=args.n_clusters
+        n_clusters=args.n_clusters,
+        variance_threshold=args.variance_threshold
     )
     
     # Analyze clustering quality
@@ -264,7 +269,8 @@ def main():
             # Run clustering with loaded data
             cluster_analyzer = ClusteringAnalyzer(df_combined, embeddings)
             clustering_results = cluster_analyzer.perform_complete_clustering(
-                n_clusters=args.n_clusters
+                n_clusters=args.n_clusters,
+                variance_threshold=args.variance_threshold
             )
             
             # Analyze clustering quality
@@ -328,7 +334,8 @@ def main():
             
             cluster_analyzer = ClusteringAnalyzer(df_combined, embeddings)
             clustering_results = cluster_analyzer.perform_complete_clustering(
-                n_clusters=args.n_clusters
+                n_clusters=args.n_clusters,
+                variance_threshold=args.variance_threshold
             )
             
             # Analyze clustering quality

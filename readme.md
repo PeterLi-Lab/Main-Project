@@ -97,6 +97,7 @@ python main.py --mode full --n-clusters 10 --max-features 2000 --n-components 15
 | `--max-features` | `-mf` | `1000` | Maximum number of TF-IDF features |
 | `--n-components` | `-nc` | `100` | Number of TF-IDF components after SVD |
 | `--n-clusters` | `-k` | `None` | Number of clusters for K-means (auto-determined if not specified) |
+| `--variance-threshold` | `-vt` | `0.9` | Variance threshold for PCA (0.9 = 90% variance retained) |
 
 ### Workflow Examples
 

@@ -19,18 +19,47 @@ class ClusteringAnalyzer:
         self.pca_2d = None
         self.reduced_embeddings_2d = None
         
-    def perform_pca_reduction(self, n_components_50d=50, n_components_2d=2):
+    def perform_pca_reduction(self, n_components_50d=50, n_components_2d=2, variance_threshold=0.9):
         """Perform PCA dimensionality reduction"""
         print("=== Performing PCA Dimensionality Reduction ===")
         
         # Suppress sklearn deprecation warnings
         warnings.filterwarnings('ignore', category=FutureWarning, module='sklearn')
         
-        # First, reduce to 50 dimensions for faster clustering
-        self.pca_50d = PCA(n_components=n_components_50d, random_state=42)
+        # First, find optimal number of components to retain variance_threshold of variance
+        print(f"Finding optimal number of components to retain {variance_threshold*100}% variance...")
+        
+        # Fit PCA with all components to get explained variance
+        pca_full = PCA(random_state=42)
+        pca_full.fit(self.embeddings)
+        
+        # Calculate cumulative explained variance
+        cumulative_variance = np.cumsum(pca_full.explained_variance_ratio_)
+        
+        # Find minimum number of components to retain variance_threshold
+        optimal_components = np.argmax(cumulative_variance >= variance_threshold) + 1
+        
+        # Ensure we don't go below minimum or above maximum reasonable values
+        min_components = 10  # Minimum reasonable for clustering
+        max_components = min(100, self.embeddings.shape[1])  # Maximum reasonable
+        optimal_components = max(min_components, min(optimal_components, max_components))
+        
+        print(f"Original dimensions: {self.embeddings.shape[1]}")
+        print(f"Optimal components for {variance_threshold*100}% variance: {optimal_components}")
+        print(f"Actual variance retained: {cumulative_variance[optimal_components-1]:.3f}")
+        
+        # Use optimal components for clustering (but cap at n_components_50d if specified)
+        clustering_components = min(optimal_components, n_components_50d)
+        if clustering_components < optimal_components:
+            print(f"Using {clustering_components} components (capped at {n_components_50d})")
+        else:
+            print(f"Using {clustering_components} components for clustering")
+        
+        # First, reduce to optimal dimensions for clustering
+        self.pca_50d = PCA(n_components=clustering_components, random_state=42)
         embeddings_50d = self.pca_50d.fit_transform(self.embeddings)
         
-        print(f"Reduced from {self.embeddings.shape[1]} dimensions to {n_components_50d} dimensions")
+        print(f"Reduced from {self.embeddings.shape[1]} dimensions to {clustering_components} dimensions")
         print(f"Explained variance ratio: {self.pca_50d.explained_variance_ratio_.sum():.3f}")
         
         # Then reduce to 2D for visualization
@@ -39,7 +68,57 @@ class ClusteringAnalyzer:
         
         print(f"Further reduced to {n_components_2d} dimensions for visualization")
         
+        # Plot variance explained curve
+        self.plot_variance_explained_curve(pca_full, optimal_components, variance_threshold)
+        
         return embeddings_50d, self.reduced_embeddings_2d
+    
+    def plot_variance_explained_curve(self, pca_full, optimal_components, variance_threshold):
+        """Plot the variance explained curve"""
+        print("\n=== Plotting Variance Explained Curve ===")
+        
+        cumulative_variance = np.cumsum(pca_full.explained_variance_ratio_)
+        
+        plt.figure(figsize=(12, 5))
+        
+        # Plot cumulative explained variance
+        plt.subplot(1, 2, 1)
+        plt.plot(range(1, len(cumulative_variance) + 1), cumulative_variance, 'b-', linewidth=2)
+        plt.axhline(y=variance_threshold, color='red', linestyle='--', 
+                   label=f'{variance_threshold*100}% Variance Threshold')
+        plt.axvline(x=optimal_components, color='green', linestyle='--', 
+                   label=f'Optimal Components: {optimal_components}')
+        plt.xlabel('Number of Components')
+        plt.ylabel('Cumulative Explained Variance')
+        plt.title('Cumulative Explained Variance vs Number of Components')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Plot individual explained variance
+        plt.subplot(1, 2, 2)
+        plt.plot(range(1, len(pca_full.explained_variance_ratio_) + 1), 
+                pca_full.explained_variance_ratio_, 'r-', linewidth=2)
+        plt.axvline(x=optimal_components, color='green', linestyle='--', 
+                   label=f'Optimal Components: {optimal_components}')
+        plt.xlabel('Component Number')
+        plt.ylabel('Explained Variance Ratio')
+        plt.title('Individual Component Explained Variance')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.show()
+        
+        # Print detailed information
+        print(f"Top 10 components explained variance:")
+        for i in range(min(10, len(pca_full.explained_variance_ratio_))):
+            print(f"  Component {i+1}: {pca_full.explained_variance_ratio_[i]:.4f}")
+        
+        print(f"\nVariance retention at different component counts:")
+        for n in [10, 20, 30, 50, 100]:
+            if n <= len(cumulative_variance):
+                variance_retained = cumulative_variance[n-1]
+                print(f"  {n} components: {variance_retained:.3f} ({variance_retained*100:.1f}%)")
     
     def perform_kmeans_clustering(self, embeddings_50d, n_clusters=None):
         """Perform K-means clustering"""
@@ -378,12 +457,12 @@ class ClusteringAnalyzer:
             for i, title in enumerate(noise_titles, 1):
                 print(f"  {i}. {title[:80]}...")
     
-    def perform_complete_clustering(self, n_clusters=None, eps=None, min_samples=None):
+    def perform_complete_clustering(self, n_clusters=None, eps=None, min_samples=None, variance_threshold=0.9):
         """Perform complete clustering analysis pipeline with both algorithms"""
         print("=== Starting Complete Clustering Analysis Pipeline ===")
         
         # Perform PCA reduction
-        embeddings_50d, reduced_embeddings_2d = self.perform_pca_reduction()
+        embeddings_50d, reduced_embeddings_2d = self.perform_pca_reduction(variance_threshold=variance_threshold)
         
         # Perform K-means clustering
         kmeans_labels = self.perform_kmeans_clustering(embeddings_50d, n_clusters)
