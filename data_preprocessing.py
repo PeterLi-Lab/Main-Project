@@ -76,6 +76,9 @@ class DataPreprocessor:
             print(f"  - {len(self.df_votes)} votes")
             print(f"  - {len(self.df_badges)} badges")
             
+            # Create combined dataset
+            self.clean_data()
+            
             return self.df_posts, self.df_users, self.df_tags, self.df_votes, self.df_badges
                 
         except Exception as e:
@@ -93,7 +96,7 @@ class DataPreprocessor:
         plt.figure(figsize=(12, 4))
         sns.histplot(self.df_posts['CreationDate'], bins=50)
         plt.title("Post Volume Over Time")
-        plt.show()
+        # plt.show()  # Commented out to disable display
         
         # Top tags
         self.df_tags['Count'] = self.df_tags['Count'].astype(int)
@@ -102,7 +105,7 @@ class DataPreprocessor:
         plt.figure(figsize=(12, 8))
         sns.barplot(data=top_tags, x='Count', y='TagName')
         plt.title("Top 20 Tags")
-        plt.show()
+        # plt.show()  # Commented out to disable display
         
         return top_tags
     
@@ -176,6 +179,7 @@ class DataPreprocessor:
             print("Comments.xml not found, skipping comment count calculation")
         
         # Post age
+        self.df_combined['CreationDate_x'] = pd.to_datetime(self.df_combined['CreationDate_x'])
         self.df_combined['post_age_days'] = (pd.Timestamp.now() - self.df_combined['CreationDate_x']).dt.days
         
         # User activity level
@@ -211,12 +215,19 @@ class DataPreprocessor:
             'Class': lambda x: (x == 1).sum(),  # Gold badges
             'TagBased': lambda x: x.sum() if x.dtype == bool else 0
         }).reset_index()
-        badge_counts.columns = ['UserId', 'total_badges', 'gold_badges', 'tag_based_badges']
+        badge_counts.columns = ['UserId', 'total_badges', 'gold_badges_count', 'tag_based_badges']
         
         # 2. Badge counts by class
         badge_by_class = self.df_badges.groupby(['UserId', 'Class']).size().unstack(fill_value=0)
-        badge_by_class.columns = ['gold_badges', 'silver_badges', 'bronze_badges']
-        badge_by_class = badge_by_class.reset_index()
+        print(f"Badge class columns: {badge_by_class.columns.tolist()}")
+        
+        # Create the badge columns with proper mapping
+        badge_by_class['gold_badges'] = badge_by_class.get(1, 0)
+        badge_by_class['silver_badges'] = badge_by_class.get(2, 0)
+        badge_by_class['bronze_badges'] = badge_by_class.get(3, 0)
+        
+        # Keep only the correctly named columns and reset index
+        badge_by_class = badge_by_class[['gold_badges', 'silver_badges', 'bronze_badges']].reset_index()
         
         # 3. Popular badges analysis
         popular_badges = self.df_badges['Name'].value_counts().head(20)
@@ -258,11 +269,27 @@ class DataPreprocessor:
         
         # Merge all badge features
         badge_features = badge_counts.merge(badge_by_class, on='UserId', how='outer')
+        print(f"After first merge, columns: {badge_features.columns.tolist()}")
+        
         badge_features = badge_features.merge(user_first_badge, on='UserId', how='outer')
         badge_features = badge_features.merge(badge_diversity, on='UserId', how='outer')
         badge_features = badge_features.merge(user_badge_stats[['UserId', 'badge_rate_per_day']], on='UserId', how='outer')
         badge_features = badge_features.merge(recent_badges, on='UserId', how='outer')
         badge_features = badge_features.merge(badge_quality, on='UserId', how='outer')
+        
+        print(f"Final badge_features columns: {badge_features.columns.tolist()}")
+        
+        # Fix column name conflicts
+        if 'gold_badges_x' in badge_features.columns and 'gold_badges_y' in badge_features.columns:
+            # Use the more accurate gold_badges_y (from badge_by_class)
+            badge_features['gold_badges'] = badge_features['gold_badges_y']
+            badge_features = badge_features.drop(['gold_badges_x', 'gold_badges_y'], axis=1)
+        elif 'gold_badges_x' in badge_features.columns:
+            badge_features['gold_badges'] = badge_features['gold_badges_x']
+            badge_features = badge_features.drop('gold_badges_x', axis=1)
+        elif 'gold_badges_y' in badge_features.columns:
+            badge_features['gold_badges'] = badge_features['gold_badges_y']
+            badge_features = badge_features.drop('gold_badges_y', axis=1)
         
         # Fill NaN values
         badge_features = badge_features.fillna(0)
@@ -429,6 +456,10 @@ class DataPreprocessor:
         
         # Calculate vote ratio (positive rating)
         if 'Score' in self.df_combined.columns and 'ViewCount' in self.df_combined.columns:
+            # Convert to numeric types
+            self.df_combined['Score'] = pd.to_numeric(self.df_combined['Score'], errors='coerce').fillna(0)
+            self.df_combined['ViewCount'] = pd.to_numeric(self.df_combined['ViewCount'], errors='coerce').fillna(0)
+            
             # Estimate positive rating based on Score and ViewCount
             # Assume Score = upvotes - downvotes, total votes can be estimated as a proportion of ViewCount
             estimated_total_votes = self.df_combined['ViewCount'] * 0.1  # Assume 10% of viewers will vote
@@ -820,7 +851,7 @@ class DataPreprocessor:
         plt.grid(True, alpha=0.3)
         
         plt.tight_layout()
-        plt.show()
+        # plt.show()  # Commented out to disable display
     
     def visualize_ctr_features(self):
         """Create visualizations for click-through rate features"""
@@ -941,7 +972,7 @@ class DataPreprocessor:
         plt.xlabel('Count')
         
         plt.tight_layout()
-        plt.show()
+        # plt.show()  # Commented out to disable display
         
         # Print CTR statistics
         print("\n=== CTR Feature Statistics ===")
@@ -964,144 +995,14 @@ class DataPreprocessor:
         print(f"Peak hours advantage: {((peak_ctr/off_peak_ctr)-1)*100:.1f}%")
     
     def visualize_badge_features(self):
-        """Create visualizations for badge features"""
-        print("\n=== Visualizing Badge Features ===")
+        """Print badge feature statistics (visualization disabled)"""
+        print("\n=== Badge Feature Statistics ===")
         
         if 'total_badges' not in self.df_combined.columns:
             print("Badge features not available. Run create_badge_features() first.")
             return
         
-        plt.figure(figsize=(20, 15))
-        
-        # Badge distribution
-        plt.subplot(3, 4, 1)
-        plt.hist(self.df_combined['total_badges'], bins=50, alpha=0.7, color='gold', edgecolor='black')
-        plt.axvline(self.df_combined['total_badges'].median(), color='red', linestyle='--', 
-                   label=f'Median: {self.df_combined["total_badges"].median():.0f}')
-        plt.title('Total Badges Distribution')
-        plt.xlabel('Number of Badges')
-        plt.ylabel('Frequency')
-        plt.legend()
-        plt.xlim(0, self.df_combined['total_badges'].quantile(0.95))
-        
-        # Badge quality score distribution
-        plt.subplot(3, 4, 2)
-        plt.hist(self.df_combined['badge_quality_score'], bins=50, alpha=0.7, color='silver', edgecolor='black')
-        plt.axvline(self.df_combined['badge_quality_score'].median(), color='red', linestyle='--', 
-                   label=f'Median: {self.df_combined["badge_quality_score"].median():.0f}')
-        plt.title('Badge Quality Score Distribution')
-        plt.xlabel('Badge Quality Score')
-        plt.ylabel('Frequency')
-        plt.legend()
-        
-        # Badge levels distribution
-        plt.subplot(3, 4, 3)
-        badge_level_counts = self.df_combined['badge_level'].value_counts()
-        plt.bar(badge_level_counts.index, badge_level_counts.values, color='lightblue', alpha=0.7)
-        plt.title('Badge Levels Distribution')
-        plt.xlabel('Badge Level')
-        plt.ylabel('Count')
-        plt.xticks(rotation=45)
-        
-        # Badge quality levels distribution
-        plt.subplot(3, 4, 4)
-        quality_level_counts = self.df_combined['badge_quality_level'].value_counts()
-        plt.bar(quality_level_counts.index, quality_level_counts.values, color='lightgreen', alpha=0.7)
-        plt.title('Badge Quality Levels Distribution')
-        plt.xlabel('Quality Level')
-        plt.ylabel('Count')
-        plt.xticks(rotation=45)
-        
-        # Badges by class
-        plt.subplot(3, 4, 5)
-        badge_classes = ['gold_badges', 'silver_badges', 'bronze_badges']
-        badge_class_means = [self.df_combined[col].mean() for col in badge_classes]
-        plt.bar(['Gold', 'Silver', 'Bronze'], badge_class_means, color=['gold', 'silver', 'brown'], alpha=0.7)
-        plt.title('Average Badges by Class')
-        plt.xlabel('Badge Class')
-        plt.ylabel('Average Count')
-        
-        # Badge earning rate distribution
-        plt.subplot(3, 4, 6)
-        earning_rate_counts = self.df_combined['badge_earning_rate'].value_counts()
-        plt.bar(earning_rate_counts.index, earning_rate_counts.values, color='lightcoral', alpha=0.7)
-        plt.title('Badge Earning Rate Distribution')
-        plt.xlabel('Earning Rate')
-        plt.ylabel('Count')
-        plt.xticks(rotation=45)
-        
-        # Badges vs Reputation
-        plt.subplot(3, 4, 7)
-        if 'user_reputation' in self.df_combined.columns:
-            plt.scatter(self.df_combined['user_reputation'], self.df_combined['total_badges'], 
-                       alpha=0.3, s=10, c=self.df_combined['has_gold_badges'], cmap='viridis')
-            plt.title('Badges vs User Reputation')
-            plt.xlabel('User Reputation')
-            plt.ylabel('Total Badges')
-            plt.colorbar(label='Has Gold Badges')
-        else:
-            plt.text(0.5, 0.5, 'User reputation not available', ha='center', va='center', transform=plt.gca().transAxes)
-            plt.title('Badges vs User Reputation')
-        
-        # Badges vs Post Quality (CTR)
-        plt.subplot(3, 4, 8)
-        if 'ctr_proxy_normalized' in self.df_combined.columns:
-            plt.scatter(self.df_combined['badge_quality_score'], self.df_combined['ctr_proxy_normalized'], 
-                       alpha=0.3, s=10, c=self.df_combined['is_badge_active'], cmap='plasma')
-            plt.title('Badge Quality vs CTR')
-            plt.xlabel('Badge Quality Score')
-            plt.ylabel('CTR Proxy')
-            plt.colorbar(label='Is Badge Active')
-        else:
-            plt.text(0.5, 0.5, 'CTR features not available', ha='center', va='center', transform=plt.gca().transAxes)
-            plt.title('Badge Quality vs CTR')
-        
-        # Badge diversity vs post count
-        plt.subplot(3, 4, 9)
-        plt.scatter(self.df_combined['unique_badge_types'], self.df_combined['user_post_count'], 
-                   alpha=0.3, s=10, c=self.df_combined['is_badge_diverse'], cmap='viridis')
-        plt.title('Badge Diversity vs Post Count')
-        plt.xlabel('Unique Badge Types')
-        plt.ylabel('User Post Count')
-        plt.colorbar(label='Is Badge Diverse')
-        
-        # Recent badge activity
-        plt.subplot(3, 4, 10)
-        plt.hist(self.df_combined['recent_badges_30d'], bins=20, alpha=0.7, color='orange', edgecolor='black')
-        plt.title('Recent Badges (30 days)')
-        plt.xlabel('Recent Badges Count')
-        plt.ylabel('Frequency')
-        plt.xlim(0, self.df_combined['recent_badges_30d'].quantile(0.95))
-        
-        # Badge earning rate over time
-        plt.subplot(3, 4, 11)
-        plt.hist(self.df_combined['badge_rate_per_day'], bins=50, alpha=0.7, color='purple', edgecolor='black')
-        plt.axvline(self.df_combined['badge_rate_per_day'].median(), color='red', linestyle='--', 
-                   label=f'Median: {self.df_combined["badge_rate_per_day"].median():.3f}')
-        plt.title('Badge Earning Rate Distribution')
-        plt.xlabel('Badges per Day')
-        plt.ylabel('Frequency')
-        plt.legend()
-        plt.xlim(0, self.df_combined['badge_rate_per_day'].quantile(0.95))
-        
-        # Badge activity by post type
-        plt.subplot(3, 4, 12)
-        if 'post_type' in self.df_combined.columns:
-            badge_by_type = self.df_combined.groupby('post_type')['total_badges'].mean().sort_values(ascending=False)
-            plt.bar(badge_by_type.index, badge_by_type.values, color='lightsteelblue', alpha=0.7)
-            plt.title('Average Badges by Post Type')
-            plt.xlabel('Post Type')
-            plt.ylabel('Average Badges')
-            plt.xticks(rotation=45)
-        else:
-            plt.text(0.5, 0.5, 'Post type not available', ha='center', va='center', transform=plt.gca().transAxes)
-            plt.title('Average Badges by Post Type')
-        
-        plt.tight_layout()
-        plt.show()
-        
         # Print badge statistics
-        print("\n=== Badge Feature Statistics ===")
         print(f"Total Badges - Mean: {self.df_combined['total_badges'].mean():.2f}, Median: {self.df_combined['total_badges'].median():.2f}")
         print(f"Badge Quality Score - Mean: {self.df_combined['badge_quality_score'].mean():.2f}, Median: {self.df_combined['badge_quality_score'].median():.2f}")
         print(f"Users with badges: {(self.df_combined['total_badges'] > 0).sum()} ({(self.df_combined['total_badges'] > 0).sum()/len(self.df_combined)*100:.1f}%)")
@@ -1129,71 +1030,30 @@ class DataPreprocessor:
             print(f"  {rate}: {count} ({(count/len(self.df_combined)*100):.1f}%)")
     
     def visualize_tfidf_features(self):
-        """Create visualizations for TF-IDF features"""
-        print("\n=== Visualizing TF-IDF Features ===")
+        """Print TF-IDF feature statistics (visualization disabled)"""
+        print("\n=== TF-IDF Feature Statistics ===")
         
         if self.tfidf_features is None:
             print("TF-IDF features not available. Run create_tfidf_features() first.")
             return
         
-        plt.figure(figsize=(20, 12))
+        # Print TF-IDF statistics
+        print(f"TF-IDF features shape: {self.tfidf_features.shape}")
+        print(f"Vocabulary size: {len(self.tfidf_vectorizer.vocabulary_)}")
+        print(f"Explained variance: {self.tfidf_svd.explained_variance_ratio_.sum():.3f}")
         
-        # TF-IDF feature importance (first component)
-        plt.subplot(2, 3, 1)
+        # Show top features
         feature_names = self.tfidf_vectorizer.get_feature_names_out()
-        top_features_idx = np.argsort(self.tfidf_svd.components_[0])[-15:]
+        top_features_idx = np.argsort(self.tfidf_svd.components_[0])[-10:]
         top_features = [feature_names[i] for i in top_features_idx]
-        top_importance = self.tfidf_svd.components_[0][top_features_idx]
+        print(f"Top 10 TF-IDF features: {top_features}")
         
-        plt.barh(range(len(top_features)), top_importance, color='skyblue')
-        plt.yticks(range(len(top_features)), top_features)
-        plt.title('Top 15 TF-IDF Features (Component 1)')
-        plt.xlabel('Feature Importance')
-        
-        # TF-IDF statistics distribution
-        plt.subplot(2, 3, 2)
-        plt.hist(self.df_combined['tfidf_mean'], bins=50, alpha=0.7, color='lightgreen', edgecolor='black')
-        plt.title('TF-IDF Mean Distribution')
-        plt.xlabel('Mean TF-IDF Value')
-        plt.ylabel('Frequency')
-        
-        plt.subplot(2, 3, 3)
-        plt.hist(self.df_combined['tfidf_std'], bins=50, alpha=0.7, color='lightcoral', edgecolor='black')
-        plt.title('TF-IDF Standard Deviation Distribution')
-        plt.xlabel('TF-IDF Standard Deviation')
-        plt.ylabel('Frequency')
-        
-        # TF-IDF vs engagement metrics
-        plt.subplot(2, 3, 4)
-        plt.scatter(self.df_combined['tfidf_mean'], np.log1p(self.df_combined['total_votes']), alpha=0.3, s=10)
-        plt.title('TF-IDF Mean vs Log(Total Votes + 1)')
-        plt.xlabel('TF-IDF Mean')
-        plt.ylabel('Log(Total Votes + 1)')
-        
-        # TF-IDF vs post length
-        plt.subplot(2, 3, 5)
-        plt.scatter(self.df_combined['tfidf_mean'], self.df_combined['post_length'], alpha=0.3, s=10)
-        plt.title('TF-IDF Mean vs Post Length')
-        plt.xlabel('TF-IDF Mean')
-        plt.ylabel('Post Length (words)')
-        plt.xlim(0, self.df_combined['tfidf_mean'].quantile(0.95))
-        plt.ylim(0, self.df_combined['post_length'].quantile(0.95))
-        
-        # Explained variance by components
-        plt.subplot(2, 3, 6)
-        explained_variance = self.tfidf_svd.explained_variance_ratio_
-        cumulative_variance = np.cumsum(explained_variance)
-        plt.plot(range(1, len(explained_variance) + 1), cumulative_variance, marker='o', linewidth=2)
-        plt.axhline(y=0.8, color='red', linestyle='--', label='80% Variance')
-        plt.axhline(y=0.9, color='orange', linestyle='--', label='90% Variance')
-        plt.title('Cumulative Explained Variance')
-        plt.xlabel('Number of Components')
-        plt.ylabel('Cumulative Explained Variance')
-        plt.legend()
-        plt.grid(True, alpha=0.3)
-        
-        plt.tight_layout()
-        plt.show()
+        # TF-IDF statistics
+        if 'tfidf_mean' in self.df_combined.columns:
+            print(f"TF-IDF Mean - Mean: {self.df_combined['tfidf_mean'].mean():.4f}, Std: {self.df_combined['tfidf_mean'].std():.4f}")
+            print(f"TF-IDF Std - Mean: {self.df_combined['tfidf_std'].mean():.4f}, Std: {self.df_combined['tfidf_std'].std():.4f}")
+            print(f"TF-IDF Max - Mean: {self.df_combined['tfidf_max'].mean():.4f}, Std: {self.df_combined['tfidf_max'].std():.4f}")
+            print(f"TF-IDF Min - Mean: {self.df_combined['tfidf_min'].mean():.4f}, Std: {self.df_combined['tfidf_min'].std():.4f}")
     
     def print_summary_statistics(self):
         """Print summary statistics of the processed data"""
@@ -1618,7 +1478,7 @@ class DataPreprocessor:
         
         plt.figure(figsize=(20, 15))
         
-        # 1. 总体影响力分数分布
+        # 1. Total Influence Score Distribution
         plt.subplot(3, 4, 1)
         plt.hist(self.df_combined['total_influence_score'], bins=50, alpha=0.7, color='purple', edgecolor='black')
         plt.axvline(self.df_combined['total_influence_score'].median(), color='red', linestyle='--', 
@@ -1629,7 +1489,7 @@ class DataPreprocessor:
         plt.legend()
         plt.xlim(0, self.df_combined['total_influence_score'].quantile(0.95))
         
-        # 2. 高质量影响力分布
+        # 2. High Quality Influence Distribution
         plt.subplot(3, 4, 2)
         plt.hist(self.df_combined['high_quality_influence'], bins=50, alpha=0.7, color='orange', edgecolor='black')
         plt.axvline(self.df_combined['high_quality_influence'].median(), color='red', linestyle='--', 
@@ -1640,7 +1500,7 @@ class DataPreprocessor:
         plt.legend()
         plt.xlim(0, self.df_combined['high_quality_influence'].quantile(0.95))
         
-        # 3. 影响力等级分布
+        # 3. Influence Level Distribution
         plt.subplot(3, 4, 3)
         influence_level_counts = self.df_combined['influence_level'].value_counts()
         plt.bar(influence_level_counts.index, influence_level_counts.values, color='lightblue', alpha=0.7)
@@ -1649,7 +1509,7 @@ class DataPreprocessor:
         plt.ylabel('Count')
         plt.xticks(rotation=45)
         
-        # 4. 多领域影响力分布
+        # 4. Multi-Domain Influence Distribution
         plt.subplot(3, 4, 4)
         multi_domain_counts = self.df_combined['multi_domain_influence'].value_counts()
         plt.bar(multi_domain_counts.index, multi_domain_counts.values, color='lightgreen', alpha=0.7)
@@ -1658,7 +1518,7 @@ class DataPreprocessor:
         plt.ylabel('Count')
         plt.xticks(rotation=45)
         
-        # 5. 影响力 vs 用户声誉
+        # 5. Influence vs User Reputation
         plt.subplot(3, 4, 5)
         if 'user_reputation' in self.df_combined.columns:
             plt.scatter(self.df_combined['user_reputation'], self.df_combined['total_influence_score'], 
@@ -1671,7 +1531,7 @@ class DataPreprocessor:
             plt.text(0.5, 0.5, 'User reputation not available', ha='center', va='center', transform=plt.gca().transAxes)
             plt.title('Influence vs User Reputation')
         
-        # 6. 影响力 vs 内容质量 (CTR)
+        # 6. Influence vs Content Quality (CTR)
         plt.subplot(3, 4, 6)
         if 'ctr_proxy_normalized' in self.df_combined.columns:
             plt.scatter(self.df_combined['total_influence_score'], self.df_combined['ctr_proxy_normalized'], 
@@ -1684,7 +1544,7 @@ class DataPreprocessor:
             plt.text(0.5, 0.5, 'CTR features not available', ha='center', va='center', transform=plt.gca().transAxes)
             plt.title('Influence vs Content Quality')
         
-        # 7. 影响力增长率分布
+        # 7. Influence Growth Rate Distribution
         plt.subplot(3, 4, 7)
         plt.hist(self.df_combined['influence_growth_rate'], bins=50, alpha=0.7, color='gold', edgecolor='black')
         plt.axvline(self.df_combined['influence_growth_rate'].median(), color='red', linestyle='--', 
@@ -1695,14 +1555,14 @@ class DataPreprocessor:
         plt.legend()
         plt.xlim(0, self.df_combined['influence_growth_rate'].quantile(0.95))
         
-        # 8. 影响力领域数量分布
+        # 8. Influence Domains Count Distribution
         plt.subplot(3, 4, 8)
         plt.hist(self.df_combined['influence_domains_count'], bins=20, alpha=0.7, color='lightcoral', edgecolor='black')
         plt.title('Influence Domains Count Distribution')
         plt.xlabel('Number of Influence Domains')
         plt.ylabel('Frequency')
         
-        # 9. Vote Ratio分布
+        # 9. Vote Ratio Distribution
         plt.subplot(3, 4, 9)
         plt.hist(self.df_combined['vote_ratio'], bins=30, alpha=0.7, color='lightsteelblue', edgecolor='black')
         plt.axvline(self.df_combined['vote_ratio'].median(), color='red', linestyle='--', 
@@ -1712,7 +1572,7 @@ class DataPreprocessor:
         plt.ylabel('Frequency')
         plt.legend()
         
-        # 10. 影响力 vs 帖子数量
+        # 10. Influence vs Post Count
         plt.subplot(3, 4, 10)
         plt.scatter(self.df_combined['user_post_count'], self.df_combined['total_influence_score'], 
                    alpha=0.3, s=10, c=self.df_combined['influence_domains_count'], cmap='viridis')
@@ -1721,7 +1581,7 @@ class DataPreprocessor:
         plt.ylabel('Total Influence Score')
         plt.colorbar(label='Influence Domains Count')
         
-        # 11. 专家用户分析
+        # 11. Expert Users Analysis
         plt.subplot(3, 4, 11)
         expert_counts = [
             self.df_combined['is_domain_expert'].sum(),
@@ -1731,7 +1591,7 @@ class DataPreprocessor:
         plt.title('Expert Users Analysis')
         plt.ylabel('Count')
         
-        # 12. 高质量影响力 vs 原始影响力
+        # 12. High Quality vs Total Influence
         plt.subplot(3, 4, 12)
         plt.scatter(self.df_combined['total_influence_score'], self.df_combined['high_quality_influence'], 
                    alpha=0.3, s=10, c=self.df_combined['vote_ratio'], cmap='plasma')
@@ -1744,9 +1604,9 @@ class DataPreprocessor:
         plt.legend()
         
         plt.tight_layout()
-        plt.show()
+        # plt.show()  # Commented out to disable display
         
-        # 打印影响力统计信息
+        # Print influence statistics
         print("\n=== User Influence Statistics ===")
         print(f"Total Influence Score - Mean: {self.df_combined['total_influence_score'].mean():.2f}, Median: {self.df_combined['total_influence_score'].median():.2f}")
         print(f"High Quality Influence - Mean: {self.df_combined['high_quality_influence'].mean():.2f}, Median: {self.df_combined['high_quality_influence'].median():.2f}")
@@ -1754,19 +1614,19 @@ class DataPreprocessor:
         print(f"Domain Experts: {self.df_combined['is_domain_expert'].sum()} ({self.df_combined['is_domain_expert'].sum()/len(self.df_combined)*100:.1f}%)")
         print(f"Multi-Domain Experts: {self.df_combined['is_multi_domain_expert'].sum()} ({self.df_combined['is_multi_domain_expert'].sum()/len(self.df_combined)*100:.1f}%)")
         
-        # 影响力等级分布
+        # Influence level distribution
         print("\nInfluence Level Distribution:")
         influence_level_counts = self.df_combined['influence_level'].value_counts()
         for level, count in influence_level_counts.items():
             print(f"  {level}: {count} ({(count/len(self.df_combined)*100):.1f}%)")
         
-        # 多领域影响力分布
+        # Multi-domain influence distribution
         print("\nMulti-Domain Influence Distribution:")
         multi_domain_counts = self.df_combined['multi_domain_influence'].value_counts()
         for level, count in multi_domain_counts.items():
             print(f"  {level}: {count} ({(count/len(self.df_combined)*100):.1f}%)")
         
-        # Vote Ratio统计
+        # Vote ratio statistics
         print("\nVote Ratio Statistics:")
         print(f"  Vote ratio - Mean: {self.df_combined['vote_ratio'].mean():.3f}")
         print(f"  Vote ratio - Median: {self.df_combined['vote_ratio'].median():.3f}")
@@ -1975,7 +1835,98 @@ class DataPreprocessor:
         
         return balanced_df
 
+    def create_7day_retention_samples(self):
+        """
+        For each user action (post or like), generate a sample with a 7-day retention label.
+        Label is 1 if the user has a post or like in the next 7 days after the action, else 0.
+        Returns a DataFrame with columns: UserId, ref_time, is_retained_7d
+        """
+        print("\n=== Creating 7-Day Retention Samples (Post & Like) ===")
+        df_posts = self.df_posts.copy()
+        df_votes = self.df_votes.copy()
+        
+        df_posts['CreationDate'] = pd.to_datetime(df_posts['CreationDate'])
+        df_votes['CreationDate'] = pd.to_datetime(df_votes['CreationDate'])
+        
+        # Only keep upvotes (like)
+        df_votes_like = df_votes[df_votes['VoteTypeId'] == '2']
+        
+        # All user actions: post or like
+        actions = pd.concat([
+            df_posts[['OwnerUserId', 'CreationDate']].rename(columns={'OwnerUserId': 'UserId'}),
+            df_votes_like[['UserId', 'CreationDate']]
+        ], ignore_index=True)
+        actions = actions.dropna(subset=['UserId', 'CreationDate'])
+        actions['UserId'] = actions['UserId'].astype(str)
+        actions = actions.sort_values(['UserId', 'CreationDate']).reset_index(drop=True)
+        print(f"Total user actions (post or like): {len(actions)}")
+        
+        # For efficient lookup, build per-user action time lists
+        user_post_times = df_posts.groupby('OwnerUserId')['CreationDate'].apply(list).to_dict()
+        user_like_times = df_votes_like.groupby('UserId')['CreationDate'].apply(list).to_dict()
+        
+        def has_activity_within_7d(user_id, ref_time):
+            # Check posts
+            posts = user_post_times.get(user_id, [])
+            for t in posts:
+                if ref_time < t <= ref_time + pd.Timedelta(days=7):
+                    return 1
+            # Check likes
+            likes = user_like_times.get(user_id, [])
+            for t in likes:
+                if ref_time < t <= ref_time + pd.Timedelta(days=7):
+                    return 1
+            return 0
+        
+        tqdm_actions = actions.copy()
+        try:
+            from tqdm import tqdm
+            tqdm.pandas()
+            tqdm_actions['is_retained_7d'] = tqdm_actions.progress_apply(
+                lambda row: has_activity_within_7d(row['UserId'], row['CreationDate']), axis=1)
+        except ImportError:
+            tqdm_actions['is_retained_7d'] = tqdm_actions.apply(
+                lambda row: has_activity_within_7d(row['UserId'], row['CreationDate']), axis=1)
+        
+        print(f"7-day retention positive samples: {tqdm_actions['is_retained_7d'].sum()} / {len(tqdm_actions)}")
+        print(f"7-day retention rate: {tqdm_actions['is_retained_7d'].mean():.3f}")
+        
+        self.df_retention_7d = tqdm_actions
+        return tqdm_actions
+
+def parse_large_xml_to_csv(xml_path, csv_path, fields=None, max_rows=None):
+    """
+    Stream-parse a large XML file (e.g., Stack Overflow Posts.xml), extract specified fields, and save as CSV.
+    :param xml_path: Path to the XML file
+    :param csv_path: Output CSV file path
+    :param fields: List of fields to extract; if None, infer from the first row
+    :param max_rows: Only parse the first max_rows rows (for debugging)
+    """
+    rows = []
+    context = ET.iterparse(xml_path, events=("end",))
+    for i, (event, elem) in enumerate(context):
+        if elem.tag == 'row':
+            if fields is None:
+                fields = list(elem.attrib.keys())
+            row = {k: elem.attrib.get(k, None) for k in fields}
+            rows.append(row)
+            if max_rows and len(rows) >= max_rows:
+                break
+        elem.clear()
+    df = pd.DataFrame(rows)
+    df.to_csv(csv_path, index=False)
+    print(f"Saved {len(df)} rows to {csv_path}")
+    return df
+
+# Example usage (can be called from main.py)
 if __name__ == "__main__":
+    xml_file = os.path.join("data", "Posts.xml")
+    csv_file = os.path.join("output", "Posts_sample.csv")
+    fields = [
+        "Id", "PostTypeId", "CreationDate", "OwnerUserId", "Title", "Tags", "ViewCount", "Score", "CommentCount", "AnswerCount", "FavoriteCount"
+    ]
+    parse_large_xml_to_csv(xml_file, csv_file, fields=fields, max_rows=10000)
+    
     # Example usage
     preprocessor = DataPreprocessor()
     df_combined, embeddings, tfidf_features, model = preprocessor.preprocess_all()

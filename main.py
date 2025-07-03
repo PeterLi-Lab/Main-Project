@@ -14,7 +14,7 @@ from pathlib import Path
 import seaborn as sns
 from data_preprocessing import DataPreprocessor
 from clustering_analysis import ClusteringAnalyzer, analyze_clustering_quality
-from prediction_models import CTRPredictor, RetentionPredictor, run_prediction_analysis, IndustrialCTRPredictor
+from prediction_models import CTRPredictor, RetentionPredictor, run_prediction_analysis, IndustrialCTRPredictor, RetentionDurationPredictor, UpliftModeling
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -26,7 +26,7 @@ from clustering_analysis import ClusteringAnalyzer, analyze_clustering_quality
 def parse_arguments():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description='Stack Overflow Data Analysis Pipeline')
-    parser.add_argument('--mode', choices=['preprocess', 'cluster', 'combined', 'umap_gmm', 'all'], 
+    parser.add_argument('--mode', choices=['preprocess', 'cluster', 'combined', 'umap_gmm', 'all', 'ctr', 'retention', 'duration', 'uplift'], 
                        default='all', help='Pipeline mode to run')
     parser.add_argument('--data-dir', default='data', help='Directory containing XML data files')
     parser.add_argument('--cache-file', default='processed_data.pkl', help='Cache file for processed data')
@@ -48,6 +48,12 @@ def parse_arguments():
                        default='full', help='GMM covariance type')
     parser.add_argument('--force-reprocess', action='store_true', 
                        help='Force reprocessing even if cache exists')
+    
+    # Prediction model arguments
+    parser.add_argument('--model-type', choices=['xgboost', 'lightgbm', 'random_forest', 'logistic_regression', 'linear_regression'], 
+                       default='xgboost', help='Model type for prediction tasks')
+    parser.add_argument('--target-col', default='ctr_proxy_normalized', 
+                       help='Target column for prediction tasks')
     
     return parser.parse_args()
 
@@ -330,81 +336,254 @@ def run_industrial_ctr_analysis(df_combined):
     
     return industrial_predictor
 
+def run_ctr_prediction(args):
+    """Run CTR prediction only"""
+    print("=== Running CTR Prediction Only ===")
+    
+    # Load processed data
+    df_combined, embeddings, tfidf_features, model = load_processed_data(args.cache_file)
+    
+    # Train CTR model
+    ctr_predictor = CTRPredictor()
+    ctr_results = ctr_predictor.train_ctr_model(
+        df_combined, 
+        target_col=args.target_col, 
+        model_type=args.model_type
+    )
+    
+    # Visualize results
+    if ctr_results:
+        ctr_predictor.visualize_ctr_results(ctr_results)
+    
+    return {
+        'df_combined': df_combined,
+        'ctr_results': ctr_results,
+        'ctr_predictor': ctr_predictor
+    }
+
+def run_retention_prediction(args):
+    """Run retention prediction only"""
+    print("=== Running Retention Prediction Only ===")
+    
+    # Load processed data
+    df_combined, embeddings, tfidf_features, model = load_processed_data(args.cache_file)
+    
+    # Create preprocessor instance and generate retention samples
+    preprocessor = DataPreprocessor(base_path=args.data_dir)
+    preprocessor.df_combined = df_combined
+    preprocessor.df_posts = preprocessor.load_data()['posts']
+    preprocessor.df_votes = preprocessor.load_data()['votes']
+    
+    # Generate 7-day retention samples
+    retention_samples = preprocessor.create_7day_retention_samples()
+    
+    # Train retention model with preprocessor
+    retention_predictor = RetentionPredictor(preprocessor=preprocessor)
+    retention_results = retention_predictor.train_retention_model(
+        df_combined, 
+        target_col='is_retained', 
+        model_type=args.model_type,
+        retention_window_days=7
+    )
+    
+    # Visualize results
+    if retention_results:
+        retention_predictor.visualize_retention_results(retention_results)
+    
+    return {
+        'df_combined': df_combined,
+        'retention_results': retention_results,
+        'retention_predictor': retention_predictor,
+        'retention_samples': retention_samples
+    }
+
+def run_duration_prediction(args):
+    """Run retention duration prediction only"""
+    print("=== Running Retention Duration Prediction Only ===")
+    
+    # Load processed data
+    df_combined, embeddings, tfidf_features, model = load_processed_data(args.cache_file)
+    
+    # Train duration model
+    duration_predictor = RetentionDurationPredictor()
+    duration_results = duration_predictor.train_duration_model(
+        df_combined, 
+        target_col='days_to_next_action', 
+        model_type=args.model_type
+    )
+    
+    # Visualize results
+    if duration_results:
+        duration_predictor.visualize_duration_results(duration_results)
+    
+    return {
+        'df_combined': df_combined,
+        'duration_results': duration_results,
+        'duration_predictor': duration_predictor
+    }
+
+def run_uplift_modeling(args):
+    """Run uplift modeling only"""
+    print("=== Running Uplift Modeling Only ===")
+    
+    # Load processed data
+    df_combined, embeddings, tfidf_features, model = load_processed_data(args.cache_file)
+    
+    # Train uplift models
+    uplift_model = UpliftModeling()
+    uplift_results = uplift_model.train_uplift_models(
+        df_combined, 
+        model_type=args.model_type
+    )
+    
+    # Visualize results
+    if uplift_results:
+        uplift_model.visualize_uplift_results(uplift_results)
+    
+    return {
+        'df_combined': df_combined,
+        'uplift_results': uplift_results,
+        'uplift_model': uplift_model
+    }
+
 def main():
-    """Main function to run the complete analysis pipeline"""
-    print("=== Stack Overflow Data Analysis System ===")
-    print("1. Data Preprocessing")
-    print("2. Clustering Analysis")
-    print("3. Basic Prediction Models")
-    print("4. Industrial-Grade CTR System")
-    print("5. Run Complete Pipeline")
+    """Main function"""
+    args = parse_arguments()
     
-    choice = input("\nPlease select an option (1-5): ").strip()
+    print("=== Stack Overflow Data Analysis Pipeline ===")
+    print(f"Mode: {args.mode}")
+    print(f"Data directory: {args.data_dir}")
+    print(f"Cache file: {args.cache_file}")
     
-    # Initialize data preprocessor
-    preprocessor = DataPreprocessor()
+    try:
+        if args.mode == 'preprocess':
+            # Run preprocessing only
+            data = run_preprocessing(args)
+            
+        elif args.mode == 'cluster':
+            # Run clustering only
+            data = run_clustering(args)
+            
+        elif args.mode == 'ctr':
+            # Run CTR prediction only
+            data = run_ctr_prediction(args)
+            
+        elif args.mode == 'retention':
+            # Run retention prediction only
+            data = run_retention_prediction(args)
+            
+        elif args.mode == 'duration':
+            # Run retention duration prediction only
+            data = run_duration_prediction(args)
+            
+        elif args.mode == 'uplift':
+            # Run uplift modeling only
+            data = run_uplift_modeling(args)
+            
+        elif args.mode == 'combined':
+            # Run combined clustering
+            data = run_combined_clustering(args)
+            
+        elif args.mode == 'umap_gmm':
+            # Run UMAP + GMM clustering
+            data = run_umap_gmm_clustering(args)
+            
+        elif args.mode == 'all':
+            # Run complete pipeline
+            print("\n=== Running Complete Pipeline ===")
+            
+            # 1. Preprocessing
+            print("\n1. Data Preprocessing")
+            data = run_preprocessing(args)
+            
+            # 2. Clustering
+            print("\n2. Clustering Analysis")
+            cluster_data = run_clustering(args)
+            
+            # 3. CTR Prediction
+            print("\n3. CTR Prediction")
+            ctr_data = run_ctr_prediction(args)
+            
+            # 4. Retention Prediction
+            print("\n4. Retention Prediction")
+            retention_data = run_retention_prediction(args)
+            
+            # 5. Duration Prediction
+            print("\n5. Retention Duration Prediction")
+            duration_data = run_duration_prediction(args)
+            
+            # 6. Uplift Modeling
+            print("\n6. Uplift Modeling")
+            uplift_data = run_uplift_modeling(args)
+            
+            # Combine all results
+            data = {
+                'preprocessing': data,
+                'clustering': cluster_data,
+                'ctr': ctr_data,
+                'retention': retention_data,
+                'duration': duration_data,
+                'uplift': uplift_data
+            }
+        
+        print(f"\n=== Pipeline completed successfully ===")
+        
+        # Save results summary
+        save_results_summary(data, args.mode)
+        
+    except Exception as e:
+        print(f"Error in pipeline: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
     
-    # Load and preprocess data
-    print("\n=== Loading and Preprocessing Data ===")
-    df_posts, df_users, df_tags, df_votes, df_badges = preprocessor.load_data()
+    return 0
+
+def save_results_summary(data, mode):
+    """Save a summary of the results"""
+    import json
+    from datetime import datetime
     
-    if df_posts is None:
-        print("Failed to load data. Please check your data files.")
-        return
+    summary = {
+        'mode': mode,
+        'timestamp': datetime.now().isoformat(),
+        'results': {}
+    }
     
-    # Run preprocessing
-    df_combined = preprocessor.preprocess_all(include_normalization=True)
+    if mode == 'all':
+        # Extract key metrics from each component
+        if 'ctr' in data and data['ctr'].get('ctr_results'):
+            summary['results']['ctr'] = {
+                'accuracy': data['ctr']['ctr_results'].get('accuracy', 'N/A'),
+                'model_type': 'CTR Prediction'
+            }
+        
+        if 'retention' in data and data['retention'].get('retention_results'):
+            summary['results']['retention'] = {
+                'accuracy': data['retention']['retention_results'].get('accuracy', 'N/A'),
+                'model_type': 'Retention Prediction'
+            }
+        
+        if 'duration' in data and data['duration'].get('duration_results'):
+            summary['results']['duration'] = {
+                'mse': data['duration']['duration_results'].get('mse', 'N/A'),
+                'r2': data['duration']['duration_results'].get('r2', 'N/A'),
+                'model_type': 'Duration Prediction'
+            }
+        
+        if 'uplift' in data and data['uplift'].get('uplift_results'):
+            summary['results']['uplift'] = {
+                'control_mse': data['uplift']['uplift_results'].get('control_mse', 'N/A'),
+                'treatment_mse': data['uplift']['uplift_results'].get('treatment_mse', 'N/A'),
+                'model_type': 'Uplift Modeling'
+            }
     
-    if df_combined is None:
-        print("Failed to preprocess data.")
-        return
+    # Save summary
+    os.makedirs('output', exist_ok=True)
+    with open('output/results_summary.json', 'w') as f:
+        json.dump(summary, f, indent=2)
     
-    print(f"Preprocessing completed. Combined dataset shape: {df_combined.shape}")
-    
-    # Execute based on user choice
-    if choice == "1":
-        print("\n=== Data Preprocessing Only ===")
-        preprocessor.print_summary_statistics()
-        
-    elif choice == "2":
-        print("\n=== Clustering Analysis ===")
-        analyzer = ClusteringAnalyzer()
-        analyzer.run_clustering_analysis(df_combined)
-        
-    elif choice == "3":
-        print("\n=== Basic Prediction Models ===")
-        run_prediction_analysis(df_combined)
-        
-    elif choice == "4":
-        print("\n=== Industrial-Grade CTR System ===")
-        industrial_predictor = run_industrial_ctr_analysis(df_combined)
-        
-    elif choice == "5":
-        print("\n=== Running Complete Pipeline ===")
-        
-        # 1. Data preprocessing summary
-        print("\n--- Step 1: Data Preprocessing Summary ---")
-        preprocessor.print_summary_statistics()
-        
-        # 2. Clustering analysis
-        print("\n--- Step 2: Clustering Analysis ---")
-        analyzer = ClusteringAnalyzer()
-        analyzer.run_clustering_analysis(df_combined)
-        
-        # 3. Basic prediction models
-        print("\n--- Step 3: Basic Prediction Models ---")
-        run_prediction_analysis(df_combined)
-        
-        # 4. Industrial-grade CTR system
-        print("\n--- Step 4: Industrial-Grade CTR System ---")
-        industrial_predictor = run_industrial_ctr_analysis(df_combined)
-        
-        print("\n=== Complete Pipeline Finished ===")
-        print("All analyses have been completed successfully!")
-        print("Check the 'output' folder for generated visualizations and results.")
-        
-    else:
-        print("Invalid choice. Please select a number between 1 and 5.")
+    print(f"Results summary saved to: output/results_summary.json")
 
 # Example usage of feature normalization
 def example_feature_normalization():
