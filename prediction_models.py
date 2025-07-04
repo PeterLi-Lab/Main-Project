@@ -952,7 +952,8 @@ class IndustrialCTRPredictor:
                     self.model_performance[model_name] = {
                         'auc': auc_score,
                         'logloss': logloss_score,
-                        'feature_count': X_train.shape[1]
+                        'feature_count': X_train.shape[1],
+                        'feature_names': all_features
                     }
                     
                     print(f"{model_name.upper()} - AUC: {auc_score:.4f}, LogLoss: {logloss_score:.4f}")
@@ -1012,8 +1013,6 @@ class IndustrialCTRPredictor:
             deep = layers.Dense(128, activation='relu')(inputs)
             deep = layers.Dropout(0.3)(deep)
             deep = layers.Dense(64, activation='relu')(deep)
-            deep = layers.Dropout(0.3)(deep)
-            deep = layers.Dense(32, activation='relu')(deep)
             
             # Combine FM and Deep
             combined = layers.Concatenate()([fm_linear, deep])
@@ -1221,10 +1220,24 @@ class IndustrialCTRPredictor:
             if model is None:
                 raise ValueError(f"Model {model_name} not found")
             
-            # Prepare features
-            feature_list = []
-            for key, value in features_dict.items():
-                feature_list.append(value)
+            # Get the expected feature names from the best model's performance
+            expected_features = self.model_performance[model_name]['feature_names'] if 'feature_names' in self.model_performance[model_name] else None
+            
+            if expected_features is None:
+                # Fallback: use all features in the order they were provided
+                feature_list = []
+                for key, value in features_dict.items():
+                    feature_list.append(value)
+                X = np.array(feature_list).reshape(1, -1)
+            else:
+                # Use the expected feature order
+                feature_list = []
+                for feature_name in expected_features:
+                    if feature_name in features_dict:
+                        feature_list.append(features_dict[feature_name])
+                    else:
+                        # Default value for missing features
+                        feature_list.append(0.0)
             
             X = np.array(feature_list).reshape(1, -1)
             
@@ -1289,6 +1302,596 @@ class IndustrialCTRPredictor:
         plt.tight_layout()
         plt.savefig('output/industrial_model_comparison.png', dpi=300, bbox_inches='tight')
         plt.show()
+
+class RetentionDurationPredictor:
+    """User Retention Duration Regression Model"""
+    def __init__(self):
+        self.model = None
+        self.scaler = StandardScaler()
+        self.feature_names = None
+
+    def prepare_duration_features(self, df_actions, df_users=None):
+        """
+        Generate regression features. Can be extended with more features.
+        df_actions: Contains UserId, CreationDate, action_type, days_to_next_action
+        df_users: Optional, user table
+        """
+        print("=== Preparing Features for Retention Duration Regression ===")
+        features = []
+        df = df_actions.copy()
+        # Action type features
+        df['is_post'] = (df['action_type'] == 'post').astype(int)
+        features.append('is_post')
+        # Time features
+        df['hour'] = df['CreationDate'].dt.hour
+        df['dayofweek'] = df['CreationDate'].dt.dayofweek
+        features += ['hour', 'dayofweek']
+        # Historical action count
+        df['user_action_count'] = df.groupby('UserId').cumcount()
+        features.append('user_action_count')
+        # User features
+        if df_users is not None and 'UserId' in df_users.columns:
+            df = df.merge(df_users[['Id', 'Reputation', 'Views', 'UpVotes', 'DownVotes']], left_on='UserId', right_on='Id', how='left')
+            features += ['Reputation', 'Views', 'UpVotes', 'DownVotes']
+        # Target variable
+        y = df['days_to_next_action']
+        print(f"Features: {features}")
+        self.feature_names = features
+        return df, features, y
+
+    def train_duration_model(self, df_actions, df_users=None, model_type='xgboost'):
+        """
+        Train regression model to predict days_to_next_action
+        """
+        print(f"\n=== Training Retention Duration Regression Model ({model_type}) ===")
+        df, features, y = self.prepare_duration_features(df_actions, df_users)
+        # Filter extreme large values
+        mask = y < 365
+        df, y = df[mask], y[mask]
+        X = df[features].fillna(0)
+        # Split training set
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        # Standardize
+        X_train_scaled = self.scaler.fit_transform(X_train)
+        X_test_scaled = self.scaler.transform(X_test)
+        # Select model
+        if model_type == 'xgboost':
+            self.model = xgb.XGBRegressor(n_estimators=100, learning_rate=0.1, max_depth=6, random_state=42, n_jobs=-1)
+        elif model_type == 'random_forest':
+            self.model = RandomForestRegressor(n_estimators=100, max_depth=10, random_state=42, n_jobs=-1)
+        elif model_type == 'linear_regression':
+            self.model = LinearRegression()
+        else:
+            raise ValueError(f"Unknown model type: {model_type}")
+        # Train
+        self.model.fit(X_train_scaled, y_train)
+        # Predict
+        y_pred = self.model.predict(X_test_scaled)
+        # Evaluate
+        mse = mean_squared_error(y_test, y_pred)
+        mae = np.mean(np.abs(y_test - y_pred))
+        print(f"MSE: {mse:.3f}, MAE: {mae:.3f}")
+        return {
+            'model': self.model,
+            'scaler': self.scaler,
+            'mse': mse,
+            'mae': mae,
+            'y_test': y_test,
+            'y_pred': y_pred
+        }
+
+    def predict_duration(self, df_new):
+        if self.model is None:
+            print("Model not trained yet.")
+            return None
+        X_new = df_new[self.feature_names].fillna(0)
+        X_new_scaled = self.scaler.transform(X_new)
+        return self.model.predict(X_new_scaled)
+
+class UpliftModeling:
+    """Uplift Modeling for Post Recommendation -> Like Behavior"""
+    
+    def __init__(self):
+        self.treatment_model = None  # Model for recommended group
+        self.control_model = None    # Model for non-recommended group
+        self.scaler = StandardScaler()
+        self.feature_names = None
+        
+    def prepare_uplift_features(self, df_uplift):
+        """Prepare features for uplift modeling"""
+        print("=== Preparing Uplift Modeling Features ===")
+        
+        features = []
+        df = df_uplift.copy()
+        
+        # Post features
+        post_features = ['Score', 'ViewCount', 'AnswerCount', 'CommentCount', 'post_total_likes']
+        for feature in post_features:
+            if feature in df.columns:
+                features.append(feature)
+        
+        # User features
+        user_features = ['Reputation', 'Views', 'UpVotes', 'DownVotes', 'user_total_likes']
+        for feature in user_features:
+            if feature in df.columns:
+                features.append(feature)
+        
+        # Time-based features (new approach)
+        time_features = ['time_diff_hours', 'is_early_vote', 'is_very_early_vote', 'is_late_vote']
+        for feature in time_features:
+            if feature in df.columns:
+                features.append(feature)
+        
+        # Interaction features
+        if 'Score' in df.columns and 'Reputation' in df.columns:
+            df['score_reputation_ratio'] = df['Score'] / (df['Reputation'] + 1)
+            features.append('score_reputation_ratio')
+        
+        if 'ViewCount' in df.columns and 'post_total_likes' in df.columns:
+            df['view_like_ratio'] = df['post_total_likes'] / (df['ViewCount'] + 1)
+            features.append('view_like_ratio')
+        
+        # Time-based interaction features
+        if 'time_diff_hours' in df.columns and 'Score' in df.columns:
+            df['score_time_ratio'] = df['Score'] / (df['time_diff_hours'] + 1)
+            features.append('score_time_ratio')
+        
+        if 'time_diff_hours' in df.columns and 'Reputation' in df.columns:
+            df['reputation_time_ratio'] = df['Reputation'] / (df['time_diff_hours'] + 1)
+            features.append('reputation_time_ratio')
+        
+        print(f"Uplift features: {features}")
+        self.feature_names = features
+        
+        return df, features
+    
+    def train_uplift_models(self, df_uplift, model_type='xgboost'):
+        """Train uplift models (Two-Model approach)"""
+        print(f"\n=== Training Uplift Models ({model_type}) ===")
+        
+        # Prepare features
+        df, features = self.prepare_uplift_features(df_uplift)
+        
+        # Separate treatment and control groups
+        treatment_data = df[df['treatment'] == 1]
+        control_data = df[df['treatment'] == 0]
+        
+        print(f"Treatment group size: {len(treatment_data)}")
+        print(f"Control group size: {len(control_data)}")
+        
+        # Prepare features and target variables
+        X_treatment = treatment_data[features].fillna(0)
+        y_treatment = treatment_data['is_click']
+        
+        X_control = control_data[features].fillna(0)
+        y_control = control_data['is_click']
+        
+        # Standardize
+        X_treatment_scaled = self.scaler.fit_transform(X_treatment)
+        X_control_scaled = self.scaler.transform(X_control)
+        
+        # Select models
+        if model_type == 'xgboost':
+            self.treatment_model = xgb.XGBClassifier(n_estimators=100, learning_rate=0.1, max_depth=6, random_state=42)
+            self.control_model = xgb.XGBClassifier(n_estimators=100, learning_rate=0.1, max_depth=6, random_state=42)
+        elif model_type == 'random_forest':
+            self.treatment_model = RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42)
+            self.control_model = RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42)
+        elif model_type == 'logistic_regression':
+            self.treatment_model = LogisticRegression(random_state=42, max_iter=1000)
+            self.control_model = LogisticRegression(random_state=42, max_iter=1000)
+        else:
+            raise ValueError(f"Unknown model type: {model_type}")
+        
+        # Train models
+        print("Training treatment model...")
+        self.treatment_model.fit(X_treatment_scaled, y_treatment)
+        
+        print("Training control model...")
+        self.control_model.fit(X_control_scaled, y_control)
+        
+        # Evaluate models
+        treatment_pred = self.treatment_model.predict_proba(X_treatment_scaled)[:, 1]
+        control_pred = self.control_model.predict_proba(X_control_scaled)[:, 1]
+        
+        # Calculate uplift
+        treatment_click_rate = y_treatment.mean()
+        control_click_rate = y_control.mean()
+        uplift = treatment_click_rate - control_click_rate
+        
+        print(f"\nUplift Analysis Results:")
+        print(f"Treatment group click rate: {treatment_click_rate:.3f}")
+        print(f"Control group click rate: {control_click_rate:.3f}")
+        print(f"Uplift (Treatment - Control): {uplift:.3f}")
+        print(f"Uplift percentage: {uplift/control_click_rate*100:.1f}%" if control_click_rate > 0 else "N/A")
+        
+        return {
+            'treatment_model': self.treatment_model,
+            'control_model': self.control_model,
+            'scaler': self.scaler,
+            'treatment_click_rate': treatment_click_rate,
+            'control_click_rate': control_click_rate,
+            'uplift': uplift,
+            'treatment_pred': treatment_pred,
+            'control_pred': control_pred,
+            'y_treatment': y_treatment,
+            'y_control': y_control
+        }
+    
+    def predict_uplift(self, df_new):
+        """Predict uplift for new samples"""
+        if self.treatment_model is None or self.control_model is None:
+            print("Models not trained yet.")
+            return None
+        
+        X_new = df_new[self.feature_names].fillna(0)
+        X_new_scaled = self.scaler.transform(X_new)
+        
+        # Predict treatment and control probabilities
+        treatment_prob = self.treatment_model.predict_proba(X_new_scaled)[:, 1]
+        control_prob = self.control_model.predict_proba(X_new_scaled)[:, 1]
+        
+        # Calculate uplift
+        uplift = treatment_prob - control_prob
+        
+        return uplift, treatment_prob, control_prob
+    
+    def visualize_uplift_results(self, results):
+        """Visualize uplift results"""
+        if results is None:
+            return
+        
+        plt.figure(figsize=(15, 10))
+        
+        # 1. Uplift distribution
+        plt.subplot(2, 3, 1)
+        treatment_pred = results['treatment_pred']
+        control_pred = results['control_pred']
+        uplift_dist = treatment_pred - control_pred
+        
+        plt.hist(uplift_dist, bins=50, alpha=0.7, label='Uplift Distribution')
+        plt.axvline(x=0, color='red', linestyle='--', label='No Uplift')
+        plt.xlabel('Uplift (Treatment - Control)')
+        plt.ylabel('Frequency')
+        plt.title('Uplift Distribution')
+        plt.legend()
+        
+        # 2. Treatment vs Control click rate comparison
+        plt.subplot(2, 3, 2)
+        groups = ['Control', 'Treatment']
+        click_rates = [results['control_click_rate'], results['treatment_click_rate']]
+        colors = ['lightblue', 'lightgreen']
+        
+        bars = plt.bar(groups, click_rates, color=colors)
+        plt.ylabel('Click Rate')
+        plt.title('Click Rate Comparison')
+        
+        # Add value labels
+        for bar, rate in zip(bars, click_rates):
+            plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.001, 
+                    f'{rate:.3f}', ha='center', va='bottom')
+        
+        # 3. Predicted probability distribution
+        plt.subplot(2, 3, 3)
+        plt.hist(results['control_pred'], bins=30, alpha=0.7, label='Control', color='lightblue')
+        plt.hist(results['treatment_pred'], bins=30, alpha=0.7, label='Treatment', color='lightgreen')
+        plt.xlabel('Predicted Click Probability')
+        plt.ylabel('Frequency')
+        plt.title('Predicted Probability Distribution')
+        plt.legend()
+        
+        # 4. Uplift vs Feature importance (if any)
+        if hasattr(self.treatment_model, 'feature_importances_'):
+            plt.subplot(2, 3, 4)
+            feature_importance = pd.DataFrame({
+                'feature': self.feature_names,
+                'importance': self.treatment_model.feature_importances_
+            }).sort_values('importance', ascending=False)
+            
+            plt.barh(feature_importance['feature'][:10], feature_importance['importance'][:10])
+            plt.xlabel('Feature Importance')
+            plt.title('Top 10 Feature Importance (Treatment Model)')
+        
+        # 5. Uplift statistics summary
+        plt.subplot(2, 3, 5)
+        uplift_stats = {
+            'Mean Uplift': np.mean(uplift_dist),
+            'Median Uplift': np.median(uplift_dist),
+            'Std Uplift': np.std(uplift_dist),
+            'Positive Uplift %': (uplift_dist > 0).mean() * 100
+        }
+        
+        plt.text(0.1, 0.8, f"Mean Uplift: {uplift_stats['Mean Uplift']:.3f}", fontsize=12)
+        plt.text(0.1, 0.6, f"Median Uplift: {uplift_stats['Median Uplift']:.3f}", fontsize=12)
+        plt.text(0.1, 0.4, f"Std Uplift: {uplift_stats['Std Uplift']:.3f}", fontsize=12)
+        plt.text(0.1, 0.2, f"Positive Uplift: {uplift_stats['Positive Uplift %']:.1f}%", fontsize=12)
+        plt.axis('off')
+        plt.title('Uplift Statistics')
+        
+        plt.tight_layout()
+        plt.show()
+
+class MultiTaskPredictor:
+    """Multi-Task Learning for CTR and Conversion Prediction"""
+    
+    def __init__(self, task_names=['ctr', 'conversion'], architecture='mmoe'):
+        self.task_names = task_names
+        self.architecture = architecture
+        self.models = {}
+        self.scalers = {}
+        self.feature_names = None
+        self.experts = None
+        self.gates = None
+        
+    def prepare_multitask_features(self, df_combined):
+        """Prepare features for multi-task learning"""
+        print("=== Preparing Multi-Task Learning Features ===")
+        
+        features = []
+        df = df_combined.copy()
+        
+        # Basic features
+        basic_features = ['Score', 'ViewCount', 'AnswerCount', 'CommentCount', 
+                        'title_length', 'post_length', 'num_tags', 'post_age_days',
+                        'user_post_count', 'user_reputation', 'total_votes', 'upvotes']
+        
+        for feature in basic_features:
+            if feature in df.columns:
+                features.append(feature)
+        
+        # User features
+        user_features = ['total_influence_score', 'high_quality_influence', 'total_badges',
+                        'badge_quality_score', 'badge_rate_per_day']
+        
+        for feature in user_features:
+            if feature in df.columns:
+                features.append(feature)
+        
+        # Time-based features (new approach)
+        time_features = ['time_diff_hours', 'is_early_vote', 'is_very_early_vote', 'is_late_vote']
+        for feature in time_features:
+            if feature in df.columns:
+                features.append(feature)
+        
+        # Interaction features
+        if 'Score' in df.columns and 'Reputation' in df.columns:
+            df['score_reputation_ratio'] = df['Score'] / (df['Reputation'] + 1)
+            features.append('score_reputation_ratio')
+        
+        if 'ViewCount' in df.columns and 'post_total_likes' in df.columns:
+            df['view_like_ratio'] = df['post_total_likes'] / (df['ViewCount'] + 1)
+            features.append('view_like_ratio')
+        
+        # Time-based interaction features
+        if 'time_diff_hours' in df.columns and 'Score' in df.columns:
+            df['score_time_ratio'] = df['Score'] / (df['time_diff_hours'] + 1)
+            features.append('score_time_ratio')
+        
+        if 'time_diff_hours' in df.columns and 'Reputation' in df.columns:
+            df['reputation_time_ratio'] = df['Reputation'] / (df['time_diff_hours'] + 1)
+            features.append('reputation_time_ratio')
+        
+        print(f"Uplift features: {features}")
+        self.feature_names = features
+        
+        return df, features
+    
+    def train_mmoe_model(self, X_train, y_train_dict, num_experts=4, expert_dim=64):
+        """Train MMOE (Multi-gate Mixture of Experts) model"""
+        print(f"Training MMOE model with {num_experts} experts...")
+        
+        try:
+            import tensorflow as tf
+            from tensorflow.keras import layers, models, optimizers
+            
+            input_dim = X_train.shape[1]
+            
+            # Input layer
+            inputs = layers.Input(shape=(input_dim,))
+            
+            # Expert networks
+            experts = []
+            for i in range(num_experts):
+                expert = layers.Dense(expert_dim, activation='relu')(inputs)
+                expert = layers.Dropout(0.3)(expert)
+                expert = layers.Dense(expert_dim, activation='relu')(expert)
+                experts.append(expert)
+            
+            # Task-specific gates and towers
+            task_outputs = {}
+            
+            for task_name in self.task_names:
+                # Gate for this task
+                gate = layers.Dense(num_experts, activation='softmax')(inputs)
+                
+                # Weighted combination of experts
+                expert_outputs = []
+                for expert in experts:
+                    expert_outputs.append(layers.Multiply()([expert, gate]))
+                
+                combined = layers.Add()(expert_outputs)
+                
+                # Task-specific tower
+                tower = layers.Dense(128, activation='relu')(combined)
+                tower = layers.Dropout(0.3)(tower)
+                tower = layers.Dense(64, activation='relu')(tower)
+                
+                # Output layer
+                output = layers.Dense(1, activation='sigmoid', name=f'{task_name}_output')(tower)
+                task_outputs[f'{task_name}_output'] = output
+            
+            # Create model
+            model = models.Model(inputs=inputs, outputs=list(task_outputs.values()))
+            
+            # Compile with task-specific losses
+            losses = {f'{task_name}_output': 'binary_crossentropy' for task_name in self.task_names}
+            metrics = {f'{task_name}_output': 'accuracy' for task_name in self.task_names}
+            
+            model.compile(
+                optimizer=optimizers.Adam(learning_rate=0.001),
+                loss=losses,
+                metrics=metrics
+            )
+            
+            return model
+            
+        except ImportError:
+            print("TensorFlow not available, using simplified multi-task approach")
+            return self._train_simplified_multitask(X_train, y_train_dict)
+    
+    def _train_simplified_multitask(self, X_train, y_train_dict):
+        """Simplified multi-task learning using XGBoost"""
+        print("Training simplified multi-task model with XGBoost...")
+        
+        models = {}
+        for task_name in self.task_names:
+            if task_name in y_train_dict:
+                model = xgb.XGBClassifier(
+                    n_estimators=100,
+                    learning_rate=0.1,
+                    max_depth=6,
+                    random_state=42
+                )
+                model.fit(X_train, y_train_dict[task_name])
+                models[task_name] = model
+        
+        return models
+    
+    def train_ple_model(self, X_train, y_train_dict, num_layers=3):
+        """Train PLE (Progressive Layered Extraction) model"""
+        print(f"Training PLE model with {num_layers} layers...")
+        
+        try:
+            import tensorflow as tf
+            from tensorflow.keras import layers, models, optimizers
+            
+            input_dim = X_train.shape[1]
+            
+            # Input layer
+            inputs = layers.Input(shape=(input_dim,))
+            
+            # Shared bottom layers
+            shared = layers.Dense(128, activation='relu')(inputs)
+            shared = layers.Dropout(0.3)(shared)
+            shared = layers.Dense(64, activation='relu')(shared)
+            
+            # Progressive layered extraction
+            task_outputs = {}
+            shared_features = shared
+            
+            for task_name in self.task_names:
+                # Task-specific extraction
+                task_specific = layers.Dense(64, activation='relu')(shared_features)
+                task_specific = layers.Dropout(0.3)(task_specific)
+                
+                # Combine shared and task-specific features
+                combined = layers.Concatenate()([shared_features, task_specific])
+                
+                # Task tower
+                tower = layers.Dense(64, activation='relu')(combined)
+                tower = layers.Dropout(0.3)(tower)
+                tower = layers.Dense(32, activation='relu')(tower)
+                
+                # Output
+                output = layers.Dense(1, activation='sigmoid', name=f'{task_name}_output')(tower)
+                task_outputs[f'{task_name}_output'] = output
+                
+                # Update shared features for next layer
+                shared_features = layers.Concatenate()([shared_features, task_specific])
+            
+            # Create model
+            model = models.Model(inputs=inputs, outputs=list(task_outputs.values()))
+            
+            # Compile
+            losses = {f'{task_name}_output': 'binary_crossentropy' for task_name in self.task_names}
+            metrics = {f'{task_name}_output': 'accuracy' for task_name in self.task_names}
+            
+            model.compile(
+                optimizer=optimizers.Adam(learning_rate=0.001),
+                loss=losses,
+                metrics=metrics
+            )
+            
+            return model
+            
+        except ImportError:
+            print("TensorFlow not available, using simplified multi-task approach")
+            return self._train_simplified_multitask(X_train, y_train_dict)
+    
+    def train_multitask_models(self, df_combined, architecture='mmoe'):
+        """Train multi-task learning models"""
+        print(f"\n=== Training Multi-Task Learning Models ({architecture.upper()}) ===")
+        
+        # Prepare features and targets
+        df, features = self.prepare_multitask_features(df_combined)
+        
+        # Prepare data
+        X = df[features].fillna(0)
+        y_dict = {
+            'ctr': df['ctr_target'],
+            'conversion': df['conversion_target']
+        }
+        
+        # Split data
+        X_train, X_test, y_train_dict, y_test_dict = train_test_split(
+            X, y_dict, test_size=0.2, random_state=42, stratify=y_dict['ctr']
+        )
+        
+        # Standardize features
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+        X_test_scaled = scaler.transform(X_test)
+        
+        # Train model based on architecture
+        if architecture == 'mmoe':
+            model = self.train_mmoe_model(X_train_scaled, y_train_dict)
+        elif architecture == 'ple':
+            model = self.train_ple_model(X_train_scaled, y_train_dict)
+        else:
+            model = self._train_simplified_multitask(X_train_scaled, y_train_dict)
+        
+        # Evaluate model
+        if hasattr(model, 'predict'):
+            # TensorFlow model
+            predictions = model.predict(X_test_scaled)
+            if isinstance(predictions, list):
+                predictions = {self.task_names[i]: pred for i, pred in enumerate(predictions)}
+            else:
+                predictions = {self.task_names[0]: predictions}
+        else:
+            # Simplified model
+            predictions = {}
+            for task_name in self.task_names:
+                if task_name in model:
+                    pred = model[task_name].predict_proba(X_test_scaled)[:, 1]
+                    predictions[task_name] = pred
+        
+        # Calculate metrics
+        results = {}
+        for task_name in self.task_names:
+            if task_name in predictions and task_name in y_test_dict:
+                y_true = y_test_dict[task_name]
+                y_pred = predictions[task_name]
+                
+                auc = roc_auc_score(y_true, y_pred)
+                accuracy = accuracy_score(y_true, (y_pred > 0.5).astype(int))
+                
+                results[task_name] = {
+                    'auc': auc,
+                    'accuracy': accuracy,
+                    'predictions': y_pred,
+                    'true_values': y_true
+                }
+        
+        self.models = model
+        self.scalers = {'feature_scaler': scaler}
+        
+        # Print results
+        print(f"\nMulti-Task Learning Results:")
+        for task_name, metrics in results.items():
+            print(f"{task_name.upper()}: AUC={metrics['auc']:.4f}, Accuracy={metrics['accuracy']:.4f}")
+        
+        return results
 
 def run_prediction_analysis(df_combined):
     """Run complete prediction analysis"""

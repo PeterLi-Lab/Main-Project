@@ -14,7 +14,8 @@ from pathlib import Path
 import seaborn as sns
 from data_preprocessing import DataPreprocessor
 from clustering_analysis import ClusteringAnalyzer, analyze_clustering_quality
-from prediction_models import CTRPredictor, RetentionPredictor, run_prediction_analysis, IndustrialCTRPredictor, RetentionDurationPredictor, UpliftModeling
+from prediction_models import CTRPredictor, RetentionPredictor, run_prediction_analysis, IndustrialCTRPredictor, RetentionDurationPredictor, UpliftModeling, MultiTaskPredictor
+from visualization import VisualizationModule
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -26,7 +27,7 @@ from clustering_analysis import ClusteringAnalyzer, analyze_clustering_quality
 def parse_arguments():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description='Stack Overflow Data Analysis Pipeline')
-    parser.add_argument('--mode', choices=['preprocess', 'cluster', 'combined', 'umap_gmm', 'all', 'ctr', 'retention', 'duration', 'uplift'], 
+    parser.add_argument('--mode', choices=['preprocess', 'cluster', 'combined', 'umap_gmm', 'all', 'ctr', 'retention', 'duration', 'uplift', 'multitask'], 
                        default='all', help='Pipeline mode to run')
     parser.add_argument('--data-dir', default='data', help='Directory containing XML data files')
     parser.add_argument('--cache-file', default='processed_data.pkl', help='Cache file for processed data')
@@ -54,6 +55,12 @@ def parse_arguments():
                        default='xgboost', help='Model type for prediction tasks')
     parser.add_argument('--target-col', default='ctr_proxy_normalized', 
                        help='Target column for prediction tasks')
+    
+    # Multi-task learning arguments
+    parser.add_argument('--multitask-architecture', choices=['mmoe', 'ple', 'simplified'], 
+                       default='mmoe', help='Multi-task learning architecture')
+    parser.add_argument('--visualize', action='store_true', help='Generate comprehensive visualizations')
+    parser.add_argument('--save-plots', action='store_true', help='Save all plots to output directory')
     
     return parser.parse_args()
 
@@ -261,81 +268,6 @@ def print_clustering_summary(df_combined, embeddings, tfidf_features,
     comparison_df = clustering_results['comparison_df']
     print(comparison_df.to_string(index=False))
 
-def run_industrial_ctr_analysis(df_combined):
-    """Run industrial-grade CTR analysis"""
-    print("\n=== Industrial-Grade CTR System ===")
-    print("Reference architecture from Alibaba, ByteDance, Google, Meta and other internet giants")
-    
-    # Create industrial features
-    preprocessor = DataPreprocessor()
-    df_industrial = preprocessor.create_industrial_features(df_combined.copy())
-    
-    # Perform negative sampling
-    df_balanced = preprocessor.create_negative_sampling(df_industrial)
-    
-    # Train industrial models
-    industrial_predictor = IndustrialCTRPredictor()
-    models = industrial_predictor.train_industrial_models(df_balanced)
-    
-    # Evaluate models
-    industrial_predictor.evaluate_industrial_models()
-    
-    # Online prediction example
-    print("\n=== Online Prediction Example ===")
-    sample_features = {
-        'Score': 10,
-        'ViewCount': 100,
-        'AnswerCount': 2,
-        'CommentCount': 5,
-        'title_length': 15,
-        'post_length': 200,
-        'num_tags': 3,
-        'post_age_days': 30,
-        'user_post_count': 50,
-        'user_reputation': 1000,
-        'total_votes': 20,
-        'upvotes': 18,
-        'vote_ratio': 0.9,
-        'total_influence_score': 500,
-        'high_quality_influence': 200,
-        'total_badges': 10,
-        'badge_quality_score': 0.8,
-        'badge_rate_per_day': 0.1,
-        'hour_of_day': 0.5,
-        'day_of_week': 0.3,
-        'month_of_year': 0.6,
-        'is_weekend': 0,
-        'is_peak_hours': 1,
-        'quality_view_ratio': 0.1,
-        'vote_quality_ratio': 0.9,
-        'engagement_efficiency': 20,
-        'content_complexity': 13.3,
-        'score_per_day': 0.33
-    }
-    
-    # Add hash encoded features
-    sample_features.update({
-        'OwnerUserId_hash': hash('user_123') % 10000,
-        'first_tag_hash': hash('python') % 10000,
-        'influence_level_hash': hash('medium') % 10000,
-        'badge_level_hash': hash('silver') % 10000,
-        'multi_domain_influence_hash': hash('single') % 10000,
-        'OwnerUserId_first_tag_cross': hash('user_123_python') % 1000,
-        'influence_level_badge_level_cross': hash('medium_silver') % 1000,
-        'user_post_count_user_reputation_cross': hash('50_1000') % 1000,
-        'Score_ViewCount_cross': hash('10_100') % 1000
-    })
-    
-    # Add sequence features (20 features: 5*4)
-    for i in range(5):
-        for j in range(4):
-            sample_features[f'seq_{i}_{j}'] = 0
-    
-    prediction_result = industrial_predictor.online_predict(sample_features)
-    print(f"Prediction result: {prediction_result}")
-    
-    return industrial_predictor
-
 def run_ctr_prediction(args):
     """Run CTR prediction only"""
     print("=== Running CTR Prediction Only ===")
@@ -371,8 +303,11 @@ def run_retention_prediction(args):
     # Create preprocessor instance and generate retention samples
     preprocessor = DataPreprocessor(base_path=args.data_dir)
     preprocessor.df_combined = df_combined
-    preprocessor.df_posts = preprocessor.load_data()['posts']
-    preprocessor.df_votes = preprocessor.load_data()['votes']
+    
+    # Load raw data for retention sample generation
+    df_posts, df_users, df_tags, df_votes, df_badges = preprocessor.load_data()
+    preprocessor.df_posts = df_posts
+    preprocessor.df_votes = df_votes
     
     # Generate 7-day retention samples
     retention_samples = preprocessor.create_7day_retention_samples()
@@ -404,22 +339,32 @@ def run_duration_prediction(args):
     # Load processed data
     df_combined, embeddings, tfidf_features, model = load_processed_data(args.cache_file)
     
-    # Train duration model
+    # Create preprocessor instance and load raw data
+    preprocessor = DataPreprocessor(base_path=args.data_dir)
+    df_posts, df_users, df_tags, df_votes, df_badges = preprocessor.load_data()
+    preprocessor.df_posts = df_posts
+    # Generate duration samples
+    duration_samples = preprocessor.create_retention_duration_samples()
+    # Train regression model
     duration_predictor = RetentionDurationPredictor()
     duration_results = duration_predictor.train_duration_model(
-        df_combined, 
-        target_col='days_to_next_action', 
-        model_type=args.model_type
+        duration_samples, df_users=df_users, model_type=args.model_type
     )
-    
     # Visualize results
     if duration_results:
-        duration_predictor.visualize_duration_results(duration_results)
-    
+        y_test = duration_results['y_test']
+        y_pred = duration_results['y_pred']
+        plt.figure(figsize=(8,6))
+        plt.scatter(y_test, y_pred, alpha=0.2)
+        plt.xlabel('True days_to_next_action')
+        plt.ylabel('Predicted')
+        plt.title('Retention Duration Regression')
+        plt.show()
     return {
         'df_combined': df_combined,
         'duration_results': duration_results,
-        'duration_predictor': duration_predictor
+        'duration_predictor': duration_predictor,
+        'duration_samples': duration_samples
     }
 
 def run_uplift_modeling(args):
@@ -429,11 +374,49 @@ def run_uplift_modeling(args):
     # Load processed data
     df_combined, embeddings, tfidf_features, model = load_processed_data(args.cache_file)
     
+    # Create preprocessor instance and load raw data
+    preprocessor = DataPreprocessor(base_path=args.data_dir)
+    df_posts, df_users, df_tags, df_votes, df_badges = preprocessor.load_data()
+    preprocessor.df_posts = df_posts
+    preprocessor.df_votes = df_votes
+    
+    # Generate uplift samples
+    all_users = set(df_users['Id'].astype(str))
+    positive_pairs = set(zip(df_posts['user_id'], df_posts['post_id']))
+    negative_samples = []
+    np.random.seed(42)
+    for post_id, group in df_posts.groupby('post_id'):
+        liked_users = set(group['user_id'])
+        possible_users = list(all_users - liked_users)
+        n_neg = len(group)  # Number of negative samples = number of positive samples
+        if n_neg == 0 or len(possible_users) == 0:
+            continue
+        sampled_users = np.random.choice(possible_users, size=min(n_neg, len(possible_users)), replace=False)
+        for i, user_id in enumerate(sampled_users):
+            # 50% probability to assign to treatment/control
+            if i < len(sampled_users) // 2:
+                # Recommendation group, time_diff random [0, 24]
+                time_diff = np.random.uniform(0, 24)
+                treatment = 1
+            else:
+                # Control group, time_diff random [24, max]
+                time_diff = np.random.uniform(24, df_posts['time_diff_hours'].max())
+                treatment = 0
+            negative_samples.append({
+                'user_id': user_id,
+                'post_id': post_id,
+                'treatment': treatment,
+                'is_click': 0,
+                'time_diff_hours': time_diff
+            })
+    if negative_samples:
+        df_neg = pd.DataFrame(negative_samples)
+        df_uplift = pd.concat([df_posts, df_neg], ignore_index=True)
+    
     # Train uplift models
     uplift_model = UpliftModeling()
     uplift_results = uplift_model.train_uplift_models(
-        df_combined, 
-        model_type=args.model_type
+        df_uplift, model_type=args.model_type
     )
     
     # Visualize results
@@ -443,8 +426,250 @@ def run_uplift_modeling(args):
     return {
         'df_combined': df_combined,
         'uplift_results': uplift_results,
-        'uplift_model': uplift_model
+        'uplift_model': uplift_model,
+        'uplift_samples': df_uplift
     }
+
+def run_multitask_learning(args):
+    """Run multi-task learning pipeline"""
+    print("\n=== Running Multi-Task Learning Pipeline ===")
+    
+    try:
+        # Load preprocessed data
+        cache_file = 'data/processed_data_cache.pkl'
+        if os.path.exists(cache_file):
+            df_combined, embeddings, tfidf_features, model = load_processed_data(cache_file)
+            print("Loaded cached preprocessed data")
+        else:
+            print("No cached data found. Please run preprocessing first.")
+            return None
+        
+        # Initialize multi-task predictor
+        from prediction_models import MultiTaskPredictor
+        
+        # Prepare features for multi-task learning
+        # Combine numerical and categorical features
+        feature_columns = [col for col in df_combined.columns 
+                         if col not in ['PostId', 'UserId', 'Title', 'Body', 'Tags', 'CreationDate']]
+        
+        X = df_combined[feature_columns].fillna(0)
+        
+        # Generate synthetic labels for multi-task learning
+        np.random.seed(42)
+        n_samples = len(X)
+        
+        # Task 1: Click prediction (binary)
+        click_labels = np.random.binomial(1, 0.3, n_samples)
+        
+        # Task 2: Conversion prediction (binary)
+        conversion_labels = np.random.binomial(1, 0.1, n_samples)
+        
+        # Task 3: Engagement score (regression)
+        engagement_scores = np.random.normal(0.5, 0.2, n_samples)
+        engagement_scores = np.clip(engagement_scores, 0, 1)
+        
+        # Initialize multi-task predictor
+        multitask_predictor = MultiTaskPredictor(
+            input_dim=len(feature_columns),
+            task_configs={
+                'click': {'type': 'binary', 'output_dim': 1},
+                'conversion': {'type': 'binary', 'output_dim': 1},
+                'engagement': {'type': 'regression', 'output_dim': 1}
+            },
+            architecture='mmoe',  # or 'ple'
+            num_experts=4,
+            expert_dim=64
+        )
+        
+        # Train the model
+        print("Training multi-task learning model...")
+        history = multitask_predictor.train(
+            X, 
+            {
+                'click': click_labels,
+                'conversion': conversion_labels,
+                'engagement': engagement_scores
+            },
+            validation_split=0.2,
+            epochs=50,
+            batch_size=32
+        )
+        
+        # Evaluate the model
+        print("Evaluating multi-task learning model...")
+        predictions = multitask_predictor.predict(X)
+        
+        # Calculate metrics for each task
+        from sklearn.metrics import accuracy_score, mean_squared_error, r2_score
+        
+        multitask_results = {}
+        
+        # Click prediction metrics
+        click_accuracy = accuracy_score(click_labels, predictions['click'] > 0.5)
+        multitask_results['click'] = {
+            'accuracy': click_accuracy,
+            'task_type': 'binary_classification'
+        }
+        
+        # Conversion prediction metrics
+        conversion_accuracy = accuracy_score(conversion_labels, predictions['conversion'] > 0.5)
+        multitask_results['conversion'] = {
+            'accuracy': conversion_accuracy,
+            'task_type': 'binary_classification'
+        }
+        
+        # Engagement prediction metrics
+        engagement_mse = mean_squared_error(engagement_scores, predictions['engagement'])
+        engagement_r2 = r2_score(engagement_scores, predictions['engagement'])
+        multitask_results['engagement'] = {
+            'mse': engagement_mse,
+            'r2': engagement_r2,
+            'task_type': 'regression'
+        }
+        
+        print("\nMulti-Task Learning Results:")
+        print(f"Click Prediction Accuracy: {click_accuracy:.4f}")
+        print(f"Conversion Prediction Accuracy: {conversion_accuracy:.4f}")
+        print(f"Engagement Prediction MSE: {engagement_mse:.4f}")
+        print(f"Engagement Prediction R²: {engagement_r2:.4f}")
+        
+        # Generate visualizations if requested
+        if args.visualize:
+            print("\nGenerating multi-task learning visualizations...")
+            viz = VisualizationModule()
+            
+            # Create results dictionary for visualization
+            viz_results = {
+                'MultiTask_Click': {'predictions': predictions['click'], 'labels': click_labels},
+                'MultiTask_Conversion': {'predictions': predictions['conversion'], 'labels': conversion_labels},
+                'MultiTask_Engagement': {'predictions': predictions['engagement'], 'labels': engagement_scores}
+            }
+            
+            viz.plot_roc_curves(viz_results)
+            viz.plot_model_comparison(viz_results, metric='accuracy')
+            
+            if args.save_plots:
+                viz.save_all_plots(viz_results, prefix="multitask_analysis")
+        
+        return {
+            'multitask_results': multitask_results,
+            'model': multitask_predictor,
+            'history': history
+        }
+        
+    except Exception as e:
+        print(f"Error in multi-task learning: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+def run_combined_clustering(args):
+    """Run combined clustering analysis"""
+    print("\n=== Running Combined Clustering Analysis ===")
+    
+    try:
+        # Load preprocessed data
+        cache_file = 'data/processed_data_cache.pkl'
+        if os.path.exists(cache_file):
+            df_combined, embeddings, tfidf_features, model = load_processed_data(cache_file)
+            print("Loaded cached preprocessed data")
+        else:
+            print("No cached data found. Please run preprocessing first.")
+            return None
+        
+        # Initialize clustering analyzer
+        from clustering_analysis import ClusteringAnalyzer
+        analyzer = ClusteringAnalyzer(df_combined, embeddings)
+        
+        # Perform combined clustering
+        print("Performing combined clustering analysis...")
+        cluster_labels, cluster_centers, cluster_quality = analyzer.perform_combined_clustering(
+            tfidf_features, 
+            embeddings,
+            variance_threshold=0.9,
+            max_dimensions=50
+        )
+        
+        # Analyze cluster characteristics
+        print("Analyzing cluster characteristics...")
+        cluster_analysis = analyzer.analyze_combined_cluster_characteristics()
+        
+        # Generate visualizations if requested
+        if args.visualize:
+            print("Generating clustering visualizations...")
+            analyzer.visualize_combined_clustering()
+            
+            if args.save_plots:
+                # Save clustering plots
+                plt.savefig('output/combined_clustering_analysis.png', dpi=300, bbox_inches='tight')
+                plt.close()
+        
+        return {
+            'cluster_labels': cluster_labels,
+            'cluster_centers': cluster_centers,
+            'cluster_quality': cluster_quality,
+            'cluster_analysis': cluster_analysis
+        }
+        
+    except Exception as e:
+        print(f"Error in combined clustering: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+def run_umap_gmm_clustering(args):
+    """Run UMAP + GMM clustering analysis"""
+    print("\n=== Running UMAP + GMM Clustering Analysis ===")
+    
+    try:
+        # Load preprocessed data
+        cache_file = 'data/processed_data_cache.pkl'
+        if os.path.exists(cache_file):
+            df_combined, embeddings, tfidf_features, model = load_processed_data(cache_file)
+            print("Loaded cached preprocessed data")
+        else:
+            print("No cached data found. Please run preprocessing first.")
+            return None
+        
+        # Initialize clustering analyzer
+        from clustering_analysis import ClusteringAnalyzer
+        analyzer = ClusteringAnalyzer(df_combined, embeddings)
+        
+        # Perform UMAP + GMM clustering
+        print("Performing UMAP + GMM clustering analysis...")
+        cluster_labels, cluster_centers, cluster_quality = analyzer.perform_umap_gmm_clustering(
+            n_components=50,
+            n_neighbors=15,
+            min_dist=0.1,
+            n_gmm_components=10
+        )
+        
+        # Analyze cluster characteristics
+        print("Analyzing cluster characteristics...")
+        cluster_analysis = analyzer.analyze_umap_gmm_cluster_characteristics()
+        
+        # Generate visualizations if requested
+        if args.visualize:
+            print("Generating UMAP + GMM clustering visualizations...")
+            analyzer.visualize_umap_gmm_clustering()
+            
+            if args.save_plots:
+                # Save clustering plots
+                plt.savefig('output/umap_gmm_clustering_analysis.png', dpi=300, bbox_inches='tight')
+                plt.close()
+        
+        return {
+            'cluster_labels': cluster_labels,
+            'cluster_centers': cluster_centers,
+            'cluster_quality': cluster_quality,
+            'cluster_analysis': cluster_analysis
+        }
+        
+    except Exception as e:
+        print(f"Error in UMAP + GMM clustering: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
 
 def main():
     """Main function"""
@@ -488,6 +713,10 @@ def main():
             # Run UMAP + GMM clustering
             data = run_umap_gmm_clustering(args)
             
+        elif args.mode == 'multitask':
+            # Run multi-task learning
+            data = run_multitask_learning(args)
+            
         elif args.mode == 'all':
             # Run complete pipeline
             print("\n=== Running Complete Pipeline ===")
@@ -516,6 +745,10 @@ def main():
             print("\n6. Uplift Modeling")
             uplift_data = run_uplift_modeling(args)
             
+            # 7. Multi-Task Learning
+            print("\n7. Multi-Task Learning")
+            multitask_data = run_multitask_learning(args)
+            
             # Combine all results
             data = {
                 'preprocessing': data,
@@ -523,9 +756,31 @@ def main():
                 'ctr': ctr_data,
                 'retention': retention_data,
                 'duration': duration_data,
-                'uplift': uplift_data
+                'uplift': uplift_data,
+                'multitask': multitask_data
             }
-        
+            
+            # Generate comprehensive visualizations if requested
+            if args.visualize:
+                print("\n8. Generating Comprehensive Visualizations")
+                viz = VisualizationModule()
+                
+                # Create combined results for visualization
+                combined_results = {}
+                if 'ctr' in data and data['ctr'].get('ctr_results'):
+                    combined_results['CTR'] = data['ctr']['ctr_results']
+                if 'retention' in data and data['retention'].get('retention_results'):
+                    combined_results['Retention'] = data['retention']['retention_results']
+                if 'multitask' in data and data['multitask'].get('multitask_results'):
+                    combined_results['MultiTask'] = data['multitask']['multitask_results']
+                
+                if combined_results:
+                    viz.plot_model_comparison(combined_results, metric='auc')
+                    viz.plot_roc_curves(combined_results)
+                    
+                    if args.save_plots:
+                        viz.save_all_plots(combined_results, prefix="comprehensive_analysis")
+
         print(f"\n=== Pipeline completed successfully ===")
         
         # Save results summary
