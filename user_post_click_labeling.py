@@ -142,12 +142,14 @@ class UserPostClickLabeling:
         print(f"Tag-user index built for {len(tag_user_dict)} tags")
         return tag_user_dict
     
-    def create_positive_samples(self, active_users, upvoted_posts, N=5):
+    def create_positive_samples(self, active_users, upvoted_posts, tag_user_dict, N=5):
         """Create positive samples for upvoted posts (assign random active users as clickers)"""
         print(f"\n=== Creating Positive Samples (N={N}) ===")
         positive_samples = []
         assigned_users_per_post = dict()
-        for post_id in upvoted_posts:
+        
+        # 添加进度条
+        for post_id in tqdm(upvoted_posts, desc="Creating positive samples"):
             available_users = set(active_users)
             if len(available_users) >= N:
                 sampled_users = random.sample(list(available_users), N)
@@ -155,10 +157,19 @@ class UserPostClickLabeling:
                 sampled_users = list(available_users)
             assigned_users_per_post[post_id] = set(sampled_users)
             for user_id in sampled_users:
+                # 计算interest_score（与负样本一致）
+                post_row = self.df_posts[self.df_posts['Id'] == post_id]
+                post_tags = set(post_row.iloc[0]['TagList']) if len(post_row) > 0 else set()
+                user_tags = set()
+                for tag in post_tags:
+                    if user_id in tag_user_dict.get(tag, set()):
+                        user_tags.add(tag)
+                interest_score = len(user_tags)
                 positive_samples.append({
                     'user_id': user_id,
                     'post_id': post_id,
-                    'is_click': 1
+                    'is_click': 1,
+                    'interest_score': interest_score
                 })
         print(f"Created {len(positive_samples)} positive samples")
         return positive_samples, assigned_users_per_post
@@ -171,11 +182,8 @@ class UserPostClickLabeling:
         # Calculate how many negative samples we need per post to achieve 1:ratio
         negative_samples_per_post = N * ratio
         
-        # Convert to list for progress bar
-        upvoted_posts_list = list(upvoted_posts)
-        
         # Add progress bar for post processing
-        for post_id in tqdm(upvoted_posts_list, desc="Processing posts for negative samples"):
+        for post_id in tqdm(upvoted_posts, desc="Processing posts for negative samples"):
             post_row = self.df_posts[self.df_posts['Id'] == post_id]
             if len(post_row) == 0:
                 continue
@@ -237,8 +245,15 @@ class UserPostClickLabeling:
             print("No upvoted posts or active users found. No samples will be created.")
             self.df_samples = pd.DataFrame()
             return self.df_samples
+        
+        # 限制处理的帖子数量，确保正负样本使用相同的帖子列表
+        upvoted_posts_list = list(upvoted_posts)
+        if len(upvoted_posts_list) > 10000:
+            print(f"Limiting to 10,000 posts from {len(upvoted_posts_list)} total upvoted posts")
+            upvoted_posts_list = random.sample(upvoted_posts_list, 10000)
+            upvoted_posts = set(upvoted_posts_list)
             
-        positive_samples, assigned_users_per_post = self.create_positive_samples(active_users, upvoted_posts, N)
+        positive_samples, assigned_users_per_post = self.create_positive_samples(active_users, upvoted_posts, tag_user_dict, N)
         negative_samples = self.create_negative_samples(active_users, upvoted_posts, tag_user_dict, assigned_users_per_post, N, ratio=3)
         
         all_samples = positive_samples + negative_samples

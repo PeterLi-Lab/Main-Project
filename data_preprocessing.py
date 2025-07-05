@@ -9,6 +9,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import TruncatedSVD
 import re
 from sklearn.preprocessing import StandardScaler
+import pickle
 
 class DataPreprocessor:
     def __init__(self, base_path=None):
@@ -751,24 +752,30 @@ class DataPreprocessor:
         print(f"TF-IDF features created successfully with shape: {self.tfidf_features.shape}")
         return self.tfidf_features
     
-    def create_semantic_embeddings(self):
-        """Create semantic embeddings for titles"""
+    def create_semantic_embeddings(self, embeddings_path='output/semantic_embeddings.npy'):
+        """Create semantic embeddings for titles, with save/load support"""
         print("\n=== Creating Semantic Embeddings ===")
-        
-        # Load sentence transformer model
+        # 优先尝试加载
+        if os.path.exists(embeddings_path):
+            print(f"Loading cached semantic embeddings from {embeddings_path}")
+            self.embeddings = np.load(embeddings_path)
+            print(f"Loaded embeddings with shape: {self.embeddings.shape}")
+            return self.embeddings
+        # 否则重新生成
         self.model = SentenceTransformer('all-MiniLM-L6-v2')
         titles = self.df_combined['Title'].fillna('').tolist()
-        
         print("Encoding titles...")
         self.embeddings = self.model.encode(titles, show_progress_bar=True)
-        
-        # Calculate embedding statistics
+        # 保存到npy
+        os.makedirs(os.path.dirname(embeddings_path), exist_ok=True)
+        np.save(embeddings_path, self.embeddings)
+        print(f"Saved embeddings to {embeddings_path}")
+        # 统计
         title_embeddings_df = pd.DataFrame(self.embeddings)
         self.df_combined['title_embedding_mean'] = title_embeddings_df.mean(axis=1)
         self.df_combined['title_embedding_std'] = title_embeddings_df.std(axis=1)
         self.df_combined['title_embedding_max'] = title_embeddings_df.max(axis=1)
         self.df_combined['title_embedding_min'] = title_embeddings_df.min(axis=1)
-        
         print(f"Created embeddings with shape: {self.embeddings.shape}")
         return self.embeddings
     

@@ -1,183 +1,220 @@
-# Prediction Tasks for Stack Overflow Data Analysis
+# Stack Overflow Data Analysis - Prediction Tasks
 
-This project implements four key prediction tasks for analyzing Stack Overflow user behavior data:
+This project implements a comprehensive pipeline for building modeling-ready datasets from raw StackExchange XML logs and training prediction models for various tasks.
 
-## 1. CTR Prediction (Click-Through Rate)
-**Task Type**: Classification (Binary)  
-**Target**: `is_click` (0/1)  
-**Goal**: Predict if a user will engage with a post based on metadata and user attributes
+## 📋 Project Overview
 
-### Features Used:
-- Text features: title length, post length, number of tags
-- User features: reputation, post count, badge information
-- Content quality: score, view count, answer count, comment count
-- Influence metrics: total influence score, vote ratio, badge quality
-- Time-based features: post age, creation date
+The project follows a structured approach for CTR prediction and Uplift modeling:
 
-### Usage:
+### 📌 Step 1: CTR Sample Construction
+- **Script**: `user_post_click_labeling.py`
+- **Purpose**: Constructs pseudo click behavior for CTR modeling
+- **Output**: `user_post_click_samples.csv` (user_id, post_id, is_click)
+- **Process**: 
+  - For upvoted posts: Randomly assign active users as positive samples (is_click = 1)
+  - For negative samples: Sample active users who didn't upvote, prioritizing similar interests (is_click = 0)
+  - Maintains 1:3 positive to negative ratio
+
+### 📌 Step 2: CTR Model Training
+- **Script**: `ctr_model_training.py`
+- **Purpose**: Trains CTR prediction models using user-post features
+- **Input**: User features + Post features + is_click labels
+- **Output**: Trained CTR models saved to `models/` directory
+- **Models**: Logistic Regression, Random Forest, XGBoost, LightGBM
+
+### 📌 Step 3: Uplift Sample Construction
+- **Script**: `uplift_treatment_labeling.py`
+- **Purpose**: Reuses CTR samples and adds treatment labels
+- **Output**: `uplift_model_data.csv` (user_id, post_id, treatment, response)
+- **Process**: 
+  - treatment = 1 for AI-related content (python, machine-learning, etc.)
+  - treatment = 0 for other content
+  - response = is_click from Step 1
+
+### 📌 Step 4: Uplift Model Training
+- **Script**: `uplift_model_training.py`
+- **Purpose**: Trains uplift models to estimate causal effects
+- **Input**: User features + Post features + treatment + response
+- **Output**: Trained uplift models saved to `models/` directory
+- **Approaches**: Two-Model (T-Learner), Single Model with Treatment Interaction, Uplift Random Forest
+
+## 🚀 Quick Start
+
+### 1. Data Preprocessing
 ```bash
-# Run CTR prediction with XGBoost
-python main.py --mode ctr --model-type xgboost
-
-# Run CTR prediction with LightGBM
-python main.py --mode ctr --model-type lightgbm
-
-# Run CTR prediction with Random Forest
-python main.py --mode ctr --model-type random_forest
+python main.py --mode preprocess
 ```
 
-## 2. Retention Prediction
-**Task Type**: Classification (Binary)  
-**Target**: `is_retained` (0/1)  
-**Goal**: Predict whether a user will return after 7 days based on session-level behaviors
-
-### Features Used:
-- User activity: post count, engagement score
-- Influence metrics: total influence score, badge information
-- Content quality: score, view count, answer count
-- Time-based features: days since first badge, post age
-- Categorical features: influence level, badge level
-
-### Usage:
+### 2. Generate CTR Samples
 ```bash
-# Run retention prediction with XGBoost
-python main.py --mode retention --model-type xgboost
-
-# Run retention prediction with Logistic Regression
-python main.py --mode retention --model-type logistic_regression
+python user_post_click_labeling.py
 ```
 
-## 3. Retention Duration Estimation
-**Task Type**: Regression  
-**Target**: `days_to_next_action` (continuous)  
-**Goal**: Estimate how long a user will return to post a new post/comment since previous post
-
-### Features Used:
-- User activity: post count, engagement score
-- Influence metrics: total influence score, badge information
-- Content quality: score, view count, answer count
-- Time-based features: days since creation, post age
-- User engagement: answer count + comment count
-
-### Usage:
+### 3. Train CTR Models
 ```bash
-# Run duration prediction with XGBoost
-python main.py --mode duration --model-type xgboost
-
-# Run duration prediction with Linear Regression
-python main.py --mode duration --model-type linear_regression
+python main.py --mode ctr_train
+# or
+python ctr_model_training.py
 ```
 
-## 4. Uplift Modeling
-**Task Type**: Treatment Effect Estimation  
-**Target**: `treatment`, `response`  
-**Goal**: Estimate the effect of exposure to certain content (e.g., AI-tagged posts) on user behavior
-
-### Features Used:
-- Same features as CTR prediction
-- Treatment assignment (synthetic for demonstration)
-- Response variable based on user behavior
-
-### Usage:
+### 4. Generate Uplift Samples
 ```bash
-# Run uplift modeling with XGBoost
-python main.py --mode uplift --model-type xgboost
-
-# Run uplift modeling with Random Forest
-python main.py --mode uplift --model-type random_forest
+python uplift_treatment_labeling.py
 ```
 
-## Complete Pipeline
+### 5. Train Uplift Models
+```bash
+python main.py --mode uplift_train
+# or
+python uplift_model_training.py
+```
 
-Run all four prediction tasks in sequence:
+## 📊 Data Flow
+
+```
+Raw XML Data → Data Preprocessing → Feature Engineering
+                    ↓
+            user_post_click_labeling.py
+                    ↓
+            user_post_click_samples.csv
+                    ↓
+            ctr_model_training.py
+                    ↓
+            Trained CTR Models
+                    ↓
+            uplift_treatment_labeling.py
+                    ↓
+            uplift_model_data.csv
+                    ↓
+            uplift_model_training.py
+                    ↓
+            Trained Uplift Models
+```
+
+## 📁 Key Files
+
+### Data Processing
+- `data_preprocessing.py` - Main data preprocessing pipeline
+- `user_post_click_labeling.py` - CTR sample generation
+- `uplift_treatment_labeling.py` - Uplift sample generation
+
+### Model Training
+- `ctr_model_training.py` - CTR model training (Step 2)
+- `uplift_model_training.py` - Uplift model training (Step 4)
+
+### Main Scripts
+- `main.py` - Main pipeline with all modes
+- `retention_prediction_labeling.py` - Retention prediction labels
+
+## 🎯 Model Outputs
+
+### CTR Models
+- **Location**: `models/ctr_*.pkl`
+- **Features**: User reputation, post engagement, content features
+- **Target**: is_click (binary)
+- **Metrics**: Accuracy, AUC
+
+### Uplift Models
+- **Location**: `models/uplift_*.pkl`
+- **Features**: Same as CTR + treatment indicator
+- **Target**: response (is_click)
+- **Metrics**: Uplift estimation accuracy, treatment effect size
+
+## 🔧 Configuration
+
+### Tag Parsing
+- Tags are pipe-separated: `|python|machine-learning|`
+- Treatment tags: `python`, `machine-learning`, `artificial-intelligence`, `deep-learning`, `neural-network`, `tensorflow`, `pytorch`, `scikit-learn`
+
+### Sampling Ratios
+- CTR: 1:3 positive to negative samples
+- Uplift: Uses same samples as CTR with treatment labels
+
+## 📈 Expected Results
+
+### CTR Model Performance
+- Accuracy: ~0.65-0.75
+- AUC: ~0.70-0.80
+- Best model typically: XGBoost or LightGBM
+
+### Uplift Model Performance
+- Actual vs Predicted uplift comparison
+- Treatment effect estimation
+- Multiple approaches for robustness
+
+## 🛠️ Dependencies
 
 ```bash
+pip install pandas numpy scikit-learn xgboost lightgbm tqdm
+```
+
+## 📝 Usage Examples
+
+### Complete Pipeline
+```bash
+# Run all steps
 python main.py --mode all
 ```
 
-This will execute:
-1. Data preprocessing
-2. Clustering analysis
-3. CTR prediction
-4. Retention prediction
-5. Duration prediction
-6. Uplift modeling
-
-## Model Types Available
-
-- **XGBoost**: Fast gradient boosting, good for most tasks
-- **LightGBM**: Light gradient boosting, efficient for large datasets
-- **Random Forest**: Ensemble method, good interpretability
-- **Logistic Regression**: Linear model for classification tasks
-- **Linear Regression**: Linear model for regression tasks
-
-## Output Files
-
-The system generates:
-- Model performance metrics
-- Feature importance rankings
-- Visualization plots
-- Results summary in `output/results_summary.json`
-
-## Testing
-
-Test all prediction tasks:
-
+### Individual Steps
 ```bash
-python test_prediction_tasks.py
+# Step 1: Preprocessing
+python main.py --mode preprocess
+
+# Step 2: CTR Training
+python main.py --mode ctr_train
+
+# Step 3: Uplift Training  
+python main.py --mode uplift_train
 ```
 
-This will verify that all four tasks work correctly with different model types.
+### Direct Script Execution
+```bash
+# Generate CTR samples
+python user_post_click_labeling.py
 
-## Data Requirements
+# Train CTR models
+python ctr_model_training.py
 
-The system expects XML files in the `data/` directory:
-- `Posts.xml`: Post data with metadata
-- `Users.xml`: User information
-- `Tags.xml`: Tag information
-- `Votes.xml`: Voting data
-- `Badges.xml`: Badge information
-- `Comments.xml`: Comment data (optional)
+# Generate uplift samples
+python uplift_treatment_labeling.py
 
-## Customization
+# Train uplift models
+python uplift_model_training.py
+```
 
-### Adding New Features
-Edit the feature preparation methods in each predictor class:
-- `prepare_ctr_features()` in `CTRPredictor`
-- `prepare_retention_features()` in `RetentionPredictor`
-- `prepare_duration_features()` in `RetentionDurationPredictor`
-- `prepare_uplift_features()` in `UpliftModeling`
+## 🔍 Model Evaluation
 
-### Changing Target Variables
-Modify the target column creation in the feature preparation methods or specify a different target using the `--target-col` parameter.
+### CTR Models
+- Cross-validation with stratification
+- Multiple algorithms comparison
+- Feature importance analysis
 
-### Adding New Models
-Add new model types to the training methods in each predictor class.
+### Uplift Models
+- Treatment effect estimation
+- Multiple approaches comparison
+- Causal inference validation
 
-## Performance Metrics
+## 📊 Output Files
 
-### Classification Tasks (CTR, Retention)
-- Accuracy
-- Precision, Recall, F1-Score
-- ROC-AUC (if applicable)
-- Confusion Matrix
+### Data Files
+- `user_post_click_samples.csv` - CTR training data
+- `uplift_model_data.csv` - Uplift training data
 
-### Regression Task (Duration)
-- Mean Squared Error (MSE)
-- R-squared (R²)
-- Mean Absolute Error (MAE)
+### Model Files
+- `models/ctr_*.pkl` - Trained CTR models
+- `models/uplift_*.pkl` - Trained uplift models
+- `models/*_feature_columns.pkl` - Feature column definitions
 
-### Uplift Modeling
-- Control and Treatment model performance
-- Uplift distribution analysis
-- Treatment effect summary
+### Results
+- Model performance metrics
+- Feature importance rankings
+- Treatment effect estimates
 
-## Example Results
+## 🎯 Next Steps
 
-After running the complete pipeline, you'll see:
-- Model performance comparisons
-- Feature importance visualizations
-- Prediction vs actual plots
-- Uplift effect analysis
-
-The results are saved in the `output/` directory for further analysis. 
+1. **Model Deployment**: Deploy trained models for real-time prediction
+2. **A/B Testing**: Validate uplift models in controlled experiments
+3. **Feature Engineering**: Add more sophisticated features
+4. **Model Ensembling**: Combine multiple approaches for better performance
+5. **Real-time Pipeline**: Build streaming data pipeline for live predictions 
