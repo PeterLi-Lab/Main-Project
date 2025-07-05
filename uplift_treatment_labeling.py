@@ -43,7 +43,11 @@ class UpliftTreatmentLabeling:
         """Parse tags from pipe-separated format: '|tag1|tag2|' -> ['tag1', 'tag2']"""
         if not tags_str or tags_str == '':
             return []
-        return [tag for tag in tags_str.strip('|').split('|') if tag]
+        # Remove leading and trailing pipes, then split by pipe
+        cleaned_tags = tags_str.strip('|')
+        if not cleaned_tags:
+            return []
+        return [tag for tag in cleaned_tags.split('|') if tag]
     
     def load_data(self):
         """Load user-post samples and post tags"""
@@ -62,32 +66,69 @@ class UpliftTreatmentLabeling:
         for row in root:
             post_id = row.get('Id')
             tags_str = row.get('Tags', '')
-            self.post_tags[post_id] = self.parse_tags(tags_str)
+            parsed_tags = self.parse_tags(tags_str)
+            self.post_tags[post_id] = parsed_tags
         
         print(f"Loaded tags for {len(self.post_tags)} posts")
+        
+        # Debug: Show some sample parsed tags
+        print("Sample parsed tags:")
+        sample_posts = list(self.post_tags.items())[:5]
+        for post_id, tags in sample_posts:
+            print(f"  Post {post_id}: {tags}")
+        
         return True
     
     def add_treatment_labels(self):
         """Add treatment labels based on post tags"""
         print("\n=== Adding Treatment Labels ===")
         
-        # Add post tags to samples
-        self.df_samples['post_tags'] = self.df_samples['post_id'].map(self.post_tags)
+        # Add post tags to samples - convert post_id to string for mapping
+        self.df_samples['post_id_str'] = self.df_samples['post_id'].astype(str)
+        self.df_samples['post_tags'] = self.df_samples['post_id_str'].map(self.post_tags)
         self.df_samples['post_tags'] = self.df_samples['post_tags'].fillna('[]')
+        
+        # Debug: Check some sample tags
+        print("Sample post tags:")
+        sample_tags = self.df_samples['post_tags'].head(5).tolist()
+        for i, tags in enumerate(sample_tags):
+            print(f"  Sample {i+1}: {tags}")
         
         # Add treatment labels for each configuration
         for treatment_name, config in self.treatments.items():
             print(f"Adding {treatment_name} treatment...")
             
-            # Check if any tag matches treatment tags
-            self.df_samples[f'treatment_{treatment_name}'] = self.df_samples['post_tags'].apply(
-                lambda tags: any(tag.lower() in config['tags'] for tag in tags)
-            ).astype(int)
+            # Check if any tag matches treatment tags (case-insensitive)
+            def check_treatment_match(tags):
+                if not tags or tags == '[]':
+                    return False
+                # Convert tags to lowercase for matching
+                tags_lower = [tag.lower() for tag in tags]
+                config_tags_lower = [tag.lower() for tag in config['tags']]
+                return any(tag in config_tags_lower for tag in tags_lower)
+            
+            self.df_samples[f'treatment_{treatment_name}'] = self.df_samples['post_tags'].apply(check_treatment_match).astype(int)
             
             # Print statistics
             treatment_count = self.df_samples[f'treatment_{treatment_name}'].sum()
             treatment_rate = treatment_count / len(self.df_samples)
             print(f"  - {treatment_name}: {treatment_count} samples ({treatment_rate:.3f})")
+            
+            # Debug: Show some matched samples
+            if treatment_count > 0:
+                matched_samples = self.df_samples[self.df_samples[f'treatment_{treatment_name}'] == 1].head(3)
+                print(f"  - Sample matched tags:")
+                for _, row in matched_samples.iterrows():
+                    print(f"    Post {row['post_id']}: {row['post_tags']}")
+            else:
+                print(f"  - No samples matched for {treatment_name}")
+        
+        # Debug: Show overall treatment distribution
+        print("\nOverall treatment distribution:")
+        for treatment_name in self.treatments.keys():
+            treatment_col = f'treatment_{treatment_name}'
+            if treatment_col in self.df_samples.columns:
+                print(f"  {treatment_name}: {self.df_samples[treatment_col].value_counts().to_dict()}")
         
         return True
     
