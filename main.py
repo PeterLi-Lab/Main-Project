@@ -24,6 +24,13 @@ warnings.filterwarnings('ignore')
 from data_preprocessing import DataPreprocessor
 from clustering_analysis import ClusteringAnalyzer, analyze_clustering_quality
 
+import sys
+from tqdm import tqdm
+import time
+
+# Add current directory to path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 def parse_arguments():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description='Stack Overflow Data Analysis Pipeline')
@@ -101,34 +108,28 @@ def run_preprocessing(args):
     """Run data preprocessing only"""
     print("=== Running Data Preprocessing Only ===")
     
-    preprocessor = DataPreprocessor(base_path=args.data_dir)
+    with tqdm(total=3, desc="Preprocessing pipeline") as pbar:
+        # Initialize preprocessor
+        preprocessor = DataPreprocessor(base_path=args.data_dir)
+        pbar.update(1)
+        
+        # Load and process data
+        df_combined, embeddings, tfidf_features, model = preprocessor.run_full_pipeline()
+        pbar.update(1)
+        
+        # Create additional samples
+        preprocessor.create_retention_samples()
+        preprocessor.create_retention_duration_samples()
+        preprocessor.create_uplift_samples()
+        pbar.update(1)
     
-    # Run complete preprocessing with feature normalization
-    normalization_config = {
-        'numerical_method': 'standard',  # Use StandardScaler for numerical features
-        'categorical_method': 'label',   # Use LabelEncoder for categorical features
-        'create_interactions': True,     # Create interaction features
-        'create_polynomials': True,      # Create polynomial features
-        'polynomial_degree': 2           # Degree of polynomial features
-    }
-    
-    df_combined, embeddings, tfidf_features, model = preprocessor.preprocess_all(
-        include_normalization=True,
-        normalization_config=normalization_config
-    )
-    
-    # Save processed data
-    data = {
+    return {
         'df_combined': df_combined,
         'embeddings': embeddings,
         'tfidf_features': tfidf_features,
         'model': model,
-        'scalers': getattr(preprocessor, 'scalers', {}),
-        'label_encoders': getattr(preprocessor, 'label_encoders', {})
+        'preprocessor': preprocessor
     }
-    save_processed_data(data, args.cache_file)
-    
-    return data
 
 def run_clustering(args):
     """Run clustering analysis only"""
@@ -137,51 +138,19 @@ def run_clustering(args):
     # Load processed data
     df_combined, embeddings, tfidf_features, model = load_processed_data(args.cache_file)
     
-    # Run clustering
-    cluster_analyzer = ClusteringAnalyzer(df_combined, embeddings)
-    clustering_results = cluster_analyzer.perform_complete_clustering(
-        n_clusters=args.n_clusters,
-        min_cluster_size=args.min_cluster_size,
-        min_samples=args.min_samples,
-        variance_threshold=args.variance_threshold,
-        use_combined_features=False
-    )
-    
-    # Analyze clustering quality
-    print("\n=== Clustering Quality Analysis ===")
-    
-    # K-means quality analysis
-    print("\n--- K-means Quality Analysis ---")
-    kmeans_quality = analyze_clustering_quality(
-        embeddings, 
-        clustering_results['kmeans_labels'], 
-        clustering_results['kmeans_model']
-    )
-    
-    # DBSCAN quality analysis (excluding noise points)
-    print("\n--- HDBSCAN Quality Analysis ---")
-    hdbscan_labels = clustering_results['hdbscan_labels']
-    non_noise_mask = hdbscan_labels != -1
-    if sum(non_noise_mask) > 1:
-        hdbscan_quality = analyze_clustering_quality(
-            embeddings[non_noise_mask], 
-            hdbscan_labels[non_noise_mask], 
-            None
-        )
-    else:
-        hdbscan_quality = {'silhouette_score': None, 'n_clusters': 0}
-    
-    # Print results
-    print_clustering_summary(df_combined, embeddings, tfidf_features, 
-                           clustering_results, kmeans_quality, hdbscan_quality)
+    with tqdm(total=2, desc="Clustering analysis") as pbar:
+        # Initialize analyzer
+        analyzer = ClusteringAnalyzer()
+        pbar.update(1)
+        
+        # Run clustering
+        cluster_results = analyzer.run_clustering_analysis(df_combined, embeddings, tfidf_features)
+        pbar.update(1)
     
     return {
         'df_combined': df_combined,
-        'embeddings': embeddings,
-        'tfidf_features': tfidf_features,
-        'clustering_results': clustering_results,
-        'kmeans_quality': kmeans_quality,
-        'hdbscan_quality': hdbscan_quality
+        'cluster_results': cluster_results,
+        'analyzer': analyzer
     }
 
 def run_visualization(args):
@@ -275,22 +244,36 @@ def run_ctr_prediction(args):
     # Load processed data
     df_combined, embeddings, tfidf_features, model = load_processed_data(args.cache_file)
     
-    # Train CTR model
-    ctr_predictor = CTRPredictor()
-    ctr_results = ctr_predictor.train_ctr_model(
-        df_combined, 
-        target_col=args.target_col, 
-        model_type=args.model_type
-    )
-    
-    # Visualize results
-    if ctr_results:
-        ctr_predictor.visualize_ctr_results(ctr_results)
+    with tqdm(total=3, desc="CTR prediction") as pbar:
+        # Initialize predictor
+        ctr_predictor = CTRPredictor()
+        pbar.update(1)
+        
+        # Train models
+        ctr_results = {}
+        model_types = ['xgboost', 'lightgbm', 'random_forest', 'logistic_regression']
+        
+        for model_type in tqdm(model_types, desc="Training CTR models"):
+            try:
+                result = ctr_predictor.train_ctr_model(df_combined, model_type=model_type)
+                if result:
+                    ctr_results[model_type] = result
+            except Exception as e:
+                print(f"Error training {model_type}: {e}")
+        
+        pbar.update(1)
+        
+        # Industrial CTR prediction
+        industrial_ctr = IndustrialCTRPredictor()
+        industrial_results = industrial_ctr.train_all_models(df_combined)
+        pbar.update(1)
     
     return {
         'df_combined': df_combined,
         'ctr_results': ctr_results,
-        'ctr_predictor': ctr_predictor
+        'industrial_results': industrial_results,
+        'ctr_predictor': ctr_predictor,
+        'industrial_ctr': industrial_ctr
     }
 
 def run_retention_prediction(args):
@@ -300,36 +283,29 @@ def run_retention_prediction(args):
     # Load processed data
     df_combined, embeddings, tfidf_features, model = load_processed_data(args.cache_file)
     
-    # Create preprocessor instance and generate retention samples
-    preprocessor = DataPreprocessor(base_path=args.data_dir)
-    preprocessor.df_combined = df_combined
-    
-    # Load raw data for retention sample generation
-    df_posts, df_users, df_tags, df_votes, df_badges = preprocessor.load_data()
-    preprocessor.df_posts = df_posts
-    preprocessor.df_votes = df_votes
-    
-    # Generate 7-day retention samples
-    retention_samples = preprocessor.create_7day_retention_samples()
-    
-    # Train retention model with preprocessor
-    retention_predictor = RetentionPredictor(preprocessor=preprocessor)
-    retention_results = retention_predictor.train_retention_model(
-        df_combined, 
-        target_col='is_retained', 
-        model_type=args.model_type,
-        retention_window_days=7
-    )
-    
-    # Visualize results
-    if retention_results:
-        retention_predictor.visualize_retention_results(retention_results)
+    with tqdm(total=2, desc="Retention prediction") as pbar:
+        # Initialize predictor
+        retention_predictor = RetentionPredictor()
+        pbar.update(1)
+        
+        # Train models
+        retention_models = ['xgboost', 'lightgbm', 'random_forest', 'logistic_regression']
+        retention_results = {}
+        
+        for model_type in tqdm(retention_models, desc="Training retention models"):
+            try:
+                result = retention_predictor.train_30day_retention_model(df_combined, model_type=model_type)
+                if result:
+                    retention_results[model_type] = result
+            except Exception as e:
+                print(f"Error training {model_type}: {e}")
+        
+        pbar.update(1)
     
     return {
         'df_combined': df_combined,
         'retention_results': retention_results,
-        'retention_predictor': retention_predictor,
-        'retention_samples': retention_samples
+        'retention_predictor': retention_predictor
     }
 
 def run_duration_prediction(args):
@@ -339,32 +315,29 @@ def run_duration_prediction(args):
     # Load processed data
     df_combined, embeddings, tfidf_features, model = load_processed_data(args.cache_file)
     
-    # Create preprocessor instance and load raw data
-    preprocessor = DataPreprocessor(base_path=args.data_dir)
-    df_posts, df_users, df_tags, df_votes, df_badges = preprocessor.load_data()
-    preprocessor.df_posts = df_posts
-    # Generate duration samples
-    duration_samples = preprocessor.create_retention_duration_samples()
-    # Train regression model
-    duration_predictor = RetentionDurationPredictor()
-    duration_results = duration_predictor.train_duration_model(
-        duration_samples, df_users=df_users, model_type=args.model_type
-    )
-    # Visualize results
-    if duration_results:
-        y_test = duration_results['y_test']
-        y_pred = duration_results['y_pred']
-        plt.figure(figsize=(8,6))
-        plt.scatter(y_test, y_pred, alpha=0.2)
-        plt.xlabel('True days_to_next_action')
-        plt.ylabel('Predicted')
-        plt.title('Retention Duration Regression')
-        plt.show()
+    with tqdm(total=2, desc="Duration prediction") as pbar:
+        # Initialize predictor
+        duration_predictor = RetentionDurationPredictor()
+        pbar.update(1)
+        
+        # Train models
+        duration_models = ['xgboost', 'lightgbm', 'random_forest', 'linear_regression']
+        duration_results = {}
+        
+        for model_type in tqdm(duration_models, desc="Training duration models"):
+            try:
+                result = duration_predictor.train_duration_model(df_combined, model_type=model_type)
+                if result:
+                    duration_results[model_type] = result
+            except Exception as e:
+                print(f"Error training {model_type}: {e}")
+        
+        pbar.update(1)
+    
     return {
         'df_combined': df_combined,
         'duration_results': duration_results,
-        'duration_predictor': duration_predictor,
-        'duration_samples': duration_samples
+        'duration_predictor': duration_predictor
     }
 
 def run_uplift_modeling(args):
@@ -380,48 +353,28 @@ def run_uplift_modeling(args):
     preprocessor.df_posts = df_posts
     preprocessor.df_votes = df_votes
     
-    # Generate uplift samples
-    all_users = set(df_users['Id'].astype(str))
-    positive_pairs = set(zip(df_posts['user_id'], df_posts['post_id']))
-    negative_samples = []
-    np.random.seed(42)
-    for post_id, group in df_posts.groupby('post_id'):
-        liked_users = set(group['user_id'])
-        possible_users = list(all_users - liked_users)
-        n_neg = len(group)  # Number of negative samples = number of positive samples
-        if n_neg == 0 or len(possible_users) == 0:
-            continue
-        sampled_users = np.random.choice(possible_users, size=min(n_neg, len(possible_users)), replace=False)
-        for i, user_id in enumerate(sampled_users):
-            # 50% probability to assign to treatment/control
-            if i < len(sampled_users) // 2:
-                # Recommendation group, time_diff random [0, 24]
-                time_diff = np.random.uniform(0, 24)
-                treatment = 1
-            else:
-                # Control group, time_diff random [24, max]
-                time_diff = np.random.uniform(24, df_posts['time_diff_hours'].max())
-                treatment = 0
-            negative_samples.append({
-                'user_id': user_id,
-                'post_id': post_id,
-                'treatment': treatment,
-                'is_click': 0,
-                'time_diff_hours': time_diff
-            })
-    if negative_samples:
-        df_neg = pd.DataFrame(negative_samples)
-        df_uplift = pd.concat([df_posts, df_neg], ignore_index=True)
-    
-    # Train uplift models
-    uplift_model = UpliftModeling()
-    uplift_results = uplift_model.train_uplift_models(
-        df_uplift, model_type=args.model_type
-    )
-    
-    # Visualize results
-    if uplift_results:
-        uplift_model.visualize_uplift_results(uplift_results)
+    with tqdm(total=3, desc="Uplift modeling") as pbar:
+        # Generate uplift samples
+        df_uplift = preprocessor.create_uplift_samples()
+        pbar.update(1)
+        
+        # Train uplift models
+        uplift_model = UpliftModeling()
+        pbar.update(1)
+        
+        # Train different models
+        model_types = ['xgboost', 'random_forest', 'logistic_regression']
+        uplift_results = {}
+        
+        for model_type in tqdm(model_types, desc="Training uplift models"):
+            try:
+                result = uplift_model.train_uplift_models(df_uplift, model_type=model_type)
+                if result:
+                    uplift_results[model_type] = result
+            except Exception as e:
+                print(f"Error training {model_type}: {e}")
+        
+        pbar.update(1)
     
     return {
         'df_combined': df_combined,
@@ -721,66 +674,53 @@ def main():
             # Run complete pipeline
             print("\n=== Running Complete Pipeline ===")
             
-            # 1. Preprocessing
-            print("\n1. Data Preprocessing")
-            data = run_preprocessing(args)
-            
-            # 2. Clustering
-            print("\n2. Clustering Analysis")
-            cluster_data = run_clustering(args)
-            
-            # 3. CTR Prediction
-            print("\n3. CTR Prediction")
-            ctr_data = run_ctr_prediction(args)
-            
-            # 4. Retention Prediction
-            print("\n4. Retention Prediction")
-            retention_data = run_retention_prediction(args)
-            
-            # 5. Duration Prediction
-            print("\n5. Retention Duration Prediction")
-            duration_data = run_duration_prediction(args)
-            
-            # 6. Uplift Modeling
-            print("\n6. Uplift Modeling")
-            uplift_data = run_uplift_modeling(args)
-            
-            # 7. Multi-Task Learning
-            print("\n7. Multi-Task Learning")
-            multitask_data = run_multitask_learning(args)
-            
-            # Combine all results
-            data = {
-                'preprocessing': data,
-                'clustering': cluster_data,
-                'ctr': ctr_data,
-                'retention': retention_data,
-                'duration': duration_data,
-                'uplift': uplift_data,
-                'multitask': multitask_data
-            }
-            
-            # Generate comprehensive visualizations if requested
-            if args.visualize:
-                print("\n8. Generating Comprehensive Visualizations")
-                viz = VisualizationModule()
+            with tqdm(total=7, desc="Complete pipeline") as pbar:
+                # 1. Preprocessing
+                print("\n1. Data Preprocessing")
+                data = run_preprocessing(args)
+                pbar.update(1)
                 
-                # Create combined results for visualization
-                combined_results = {}
-                if 'ctr' in data and data['ctr'].get('ctr_results'):
-                    combined_results['CTR'] = data['ctr']['ctr_results']
-                if 'retention' in data and data['retention'].get('retention_results'):
-                    combined_results['Retention'] = data['retention']['retention_results']
-                if 'multitask' in data and data['multitask'].get('multitask_results'):
-                    combined_results['MultiTask'] = data['multitask']['multitask_results']
+                # 2. Clustering
+                print("\n2. Clustering Analysis")
+                cluster_data = run_clustering(args)
+                pbar.update(1)
                 
-                if combined_results:
-                    viz.plot_model_comparison(combined_results, metric='auc')
-                    viz.plot_roc_curves(combined_results)
-                    
-                    if args.save_plots:
-                        viz.save_all_plots(combined_results, prefix="comprehensive_analysis")
-
+                # 3. CTR Prediction
+                print("\n3. CTR Prediction")
+                ctr_data = run_ctr_prediction(args)
+                pbar.update(1)
+                
+                # 4. Retention Prediction
+                print("\n4. Retention Prediction")
+                retention_data = run_retention_prediction(args)
+                pbar.update(1)
+                
+                # 5. Duration Prediction
+                print("\n5. Retention Duration Prediction")
+                duration_data = run_duration_prediction(args)
+                pbar.update(1)
+                
+                # 6. Uplift Modeling
+                print("\n6. Uplift Modeling")
+                uplift_data = run_uplift_modeling(args)
+                pbar.update(1)
+                
+                # 7. Multi-Task Learning
+                print("\n7. Multi-Task Learning")
+                multitask_data = run_multitask_learning(args)
+                pbar.update(1)
+                
+                # Combine all results
+                data = {
+                    'preprocessing': data,
+                    'clustering': cluster_data,
+                    'ctr': ctr_data,
+                    'retention': retention_data,
+                    'duration': duration_data,
+                    'uplift': uplift_data,
+                    'multitask': multitask_data
+                }
+            
         print(f"\n=== Pipeline completed successfully ===")
         
         # Save results summary

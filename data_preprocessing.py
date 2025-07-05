@@ -67,6 +67,9 @@ class DataPreprocessor:
             self.df_users = self.parse_xml(os.path.join(self.base_path, 'Users.xml'))
             self.df_tags = self.parse_xml(os.path.join(self.base_path, 'Tags.xml'))
             self.df_votes = self.parse_xml(os.path.join(self.base_path, 'Votes.xml'))
+            print(f"Votes columns: {self.df_votes.columns.tolist()}")
+            print(f"Votes sample data:")
+            print(self.df_votes.head())
             self.df_badges = self.parse_xml(os.path.join(self.base_path, 'Badges.xml'))
             
             print(f"Successfully loaded:")
@@ -1152,6 +1155,10 @@ class DataPreprocessor:
             print(f"  Badge earning rate - Mean: {self.df_combined['badge_rate_per_day'].mean():.3f}, Max: {self.df_combined['badge_rate_per_day'].max():.3f}")
             print(f"  Recent badges (30d) - Mean: {self.df_combined['recent_badges_30d'].mean():.2f}, Max: {self.df_combined['recent_badges_30d'].max()}")
     
+    def run_full_pipeline(self):
+        """Run the complete preprocessing pipeline - alias for preprocess_all"""
+        return self.preprocess_all(include_normalization=True)
+    
     def preprocess_all(self, include_normalization=True, normalization_config=None):
         """Run complete preprocessing pipeline"""
         print("=== Starting Complete Data Preprocessing Pipeline ===")
@@ -1835,6 +1842,10 @@ class DataPreprocessor:
         
         return balanced_df
 
+    def create_retention_samples(self):
+        """Create retention samples - alias for create_7day_retention_samples"""
+        return self.create_7day_retention_samples()
+    
     def create_7day_retention_samples(self):
         """
         For each user action (post or like), generate a sample with a 7-day retention label.
@@ -1951,51 +1962,96 @@ class DataPreprocessor:
         df_posts['OwnerUserId'] = df_posts['OwnerUserId'].astype(str)
         df_posts['PostId'] = df_posts['Id'].astype(str)
         
-        # Process votes data (likes)
+        # Process votes data (likes) - Note: Votes.xml doesn't have UserId
         df_votes['CreationDate'] = pd.to_datetime(df_votes['CreationDate'])
-        df_votes['UserId'] = df_votes['UserId'].astype(str)
         df_votes['PostId'] = df_votes['PostId'].astype(str)
+        
+        # Debug: Check VoteTypeId values
+        print(f"VoteTypeId unique values: {df_votes['VoteTypeId'].unique()}")
+        print(f"VoteTypeId value counts:")
+        print(df_votes['VoteTypeId'].value_counts())
         
         # Keep only likes (VoteTypeId = '2')
         df_likes = df_votes[df_votes['VoteTypeId'] == '2'].copy()
+        print(f"df_likes shape: {df_likes.shape}")
+        print(f"Note: Votes.xml doesn't contain UserId field")
         
-        # Merge posts and votes to get time difference
-        df_merged = df_likes.merge(df_posts[['PostId', 'CreationDate', 'OwnerUserId']], on='PostId', how='left')
-        df_merged = df_merged.rename(columns={'CreationDate_x': 'VoteDate', 'CreationDate_y': 'PostCreationDate'})
+        # Load user activity data (Comments and PostHistory) to get active users
+        print(f"\nLoading user activity data to define active users...")
+        try:
+            df_comments = self.parse_xml(os.path.join(self.base_path, 'Comments.xml'))
+            df_post_history = self.parse_xml(os.path.join(self.base_path, 'PostHistory.xml'))
+            print(f"Loaded {len(df_comments)} comments and {len(df_post_history)} post history records")
+        except Exception as e:
+            print(f"Error loading comments/post history: {e}")
+            df_comments = pd.DataFrame()
+            df_post_history = pd.DataFrame()
         
-        # Calculate time difference in hours
-        df_merged['time_diff_hours'] = (df_merged['VoteDate'] - df_merged['PostCreationDate']).dt.total_seconds() / 3600
+        # Define active users based on posting and commenting behavior
+        post_users = set(self.df_posts['OwnerUserId'].unique())
+        comment_users = set()
+        if len(df_comments) > 0 and 'UserId' in df_comments.columns:
+            comment_users = set(df_comments['UserId'].unique())
         
-        # Remove votes on own posts
-        df_merged = df_merged[df_merged['UserId'] != df_merged['OwnerUserId']]
+        post_history_users = set()
+        if len(df_post_history) > 0 and 'UserId' in df_post_history.columns:
+            df_post_history['CreationDate'] = pd.to_datetime(df_post_history['CreationDate'])
+            recent_date = pd.Timestamp.now() - pd.Timedelta(days=180)
+            recent_post_history = df_post_history[df_post_history['CreationDate'] >= recent_date]
+            post_history_users = set(recent_post_history['UserId'].unique())
         
-        # Define treatment based on time difference
-        # Early votes (short time difference) = more likely from recommendation
-        # Late votes (long time difference) = more likely from search/external links
+        # Combine all active users
+        active_users = list(post_users | comment_users | post_history_users)
+        active_users = [str(uid) for uid in active_users if pd.notna(uid)]
+        print(f"Total active users: {len(active_users)}")
         
-        # Calculate time difference percentiles for treatment threshold
-        time_diff_percentiles = df_merged['time_diff_hours'].describe()
-        print(f"Time difference statistics (hours):")
-        print(f"  25th percentile: {time_diff_percentiles['25%']:.2f}")
-        print(f"  50th percentile: {time_diff_percentiles['50%']:.2f}")
-        print(f"  75th percentile: {time_diff_percentiles['75%']:.2f}")
+        # Create uplift samples by assigning active users to vote events
+        print(f"\nCreating uplift samples by assigning active users to vote events...")
         
-        # Use 50th percentile as threshold (median)
-        time_threshold = time_diff_percentiles['50%']
-        
-        # Define treatment: early votes (≤ median) = recommended, late votes (> median) = not recommended
-        df_merged['treatment'] = (df_merged['time_diff_hours'] <= time_threshold).astype(int)
-        df_merged['is_click'] = 1  # All votes are clicks (likes)
-        
-        # Add some noise to make it more realistic
-        # Some early votes might still be from search, some late votes might be from recommendations
+        # For each vote, randomly assign an active user
         np.random.seed(42)
-        noise_mask = np.random.random(len(df_merged)) < 0.1  # 10% noise
-        df_merged.loc[noise_mask, 'treatment'] = 1 - df_merged.loc[noise_mask, 'treatment']
+        uplift_samples = []
         
-        # Create final uplift dataset
-        df_uplift = df_merged[['UserId', 'PostId', 'treatment', 'is_click', 'time_diff_hours']].copy()
-        df_uplift = df_uplift.rename(columns={'UserId': 'user_id', 'PostId': 'post_id'})
+        for idx, vote_row in df_likes.iterrows():
+            # Randomly select an active user for this vote
+            assigned_user = np.random.choice(active_users)
+            
+            # Get post information
+            post_id = vote_row['PostId']
+            vote_time = vote_row['CreationDate']
+            
+            post_info = df_posts[df_posts['Id'] == post_id]
+            if len(post_info) == 0:
+                continue
+                
+            post_time = post_info.iloc[0]['CreationDate']
+            
+            # Calculate time difference
+            time_diff_hours = (vote_time - post_time).total_seconds() / 3600
+            
+            # Skip if user voted on their own post
+            if assigned_user == str(post_info.iloc[0]['OwnerUserId']):
+                continue
+            
+            # Define treatment based on time difference
+            time_threshold = 2943.34  # Use median from previous analysis
+            treatment = 1 if time_diff_hours <= time_threshold else 0
+            
+            # Add some noise
+            if np.random.random() < 0.1:  # 10% noise
+                treatment = 1 - treatment
+            
+            uplift_samples.append({
+                'user_id': assigned_user,
+                'post_id': post_id,
+                'treatment': treatment,
+                'is_click': 1,  # All votes are clicks
+                'time_diff_hours': time_diff_hours
+            })
+        
+        # Create DataFrame from uplift samples
+        df_uplift = pd.DataFrame(uplift_samples)
+        print(f"Created {len(df_uplift)} uplift samples with assigned users")
         
         # Add post features
         df_posts = df_posts.rename(columns={'PostId': 'post_id'})
@@ -2045,6 +2101,18 @@ class DataPreprocessor:
         print(f"Treatment group click rate: {df_uplift[df_uplift['treatment'] == 1]['is_click'].mean():.3f}")
         print(f"Control group click rate: {df_uplift[df_uplift['treatment'] == 0]['is_click'].mean():.3f}")
         
+        # Check if we have both positive and negative samples in each group
+        treatment_pos = df_uplift[(df_uplift['treatment'] == 1) & (df_uplift['is_click'] == 1)].shape[0]
+        treatment_neg = df_uplift[(df_uplift['treatment'] == 1) & (df_uplift['is_click'] == 0)].shape[0]
+        control_pos = df_uplift[(df_uplift['treatment'] == 0) & (df_uplift['is_click'] == 1)].shape[0]
+        control_neg = df_uplift[(df_uplift['treatment'] == 0) & (df_uplift['is_click'] == 0)].shape[0]
+        
+        print(f"\nSample Distribution:")
+        print(f"Treatment + Positive: {treatment_pos}")
+        print(f"Treatment + Negative: {treatment_neg}")
+        print(f"Control + Positive: {control_pos}")
+        print(f"Control + Negative: {control_neg}")
+        
         # Time difference analysis
         treatment_time_diff = df_uplift[df_uplift['treatment'] == 1]['time_diff_hours']
         control_time_diff = df_uplift[df_uplift['treatment'] == 0]['time_diff_hours']
@@ -2055,42 +2123,155 @@ class DataPreprocessor:
         print(f"Treatment group - Median time diff: {treatment_time_diff.median():.2f} hours")
         print(f"Control group - Median time diff: {control_time_diff.median():.2f} hours")
         
-        # --- Add negative (not liked) samples for uplift modeling ---
-        # For each post, sample users who did not like the post
-        all_users = set(self.df_users['Id'].astype(str))
-        positive_pairs = set(zip(df_uplift['user_id'], df_uplift['post_id']))
+        # --- Create negative samples based on "exposure but no click" ---
+        print(f"\nCreating negative samples based on 'exposure but no click'...")
+        
+        # Define active users based on posting and commenting behavior
+        print(f"\nDefining active users based on posting and commenting behavior...")
+        
+        # Load comments and post history data
+        try:
+            df_comments = self.parse_xml(os.path.join(self.base_path, 'Comments.xml'))
+            df_post_history = self.parse_xml(os.path.join(self.base_path, 'PostHistory.xml'))
+            print(f"Loaded {len(df_comments)} comments and {len(df_post_history)} post history records")
+        except Exception as e:
+            print(f"Error loading comments/post history: {e}")
+            # Fallback to posts data only
+            df_comments = pd.DataFrame()
+            df_post_history = pd.DataFrame()
+        
+        # Get users from posts (post owners)
+        post_users = set(self.df_posts['OwnerUserId'].unique())
+        print(f"Users who posted: {len(post_users)}")
+        
+        # Get users from comments
+        comment_users = set()
+        if len(df_comments) > 0 and 'UserId' in df_comments.columns:
+            comment_users = set(df_comments['UserId'].unique())
+            print(f"Users who commented: {len(comment_users)}")
+        
+        # Get users from post history (recent activity)
+        post_history_users = set()
+        if len(df_post_history) > 0 and 'UserId' in df_post_history.columns:
+            # Filter recent post history (last 6 months for example)
+            df_post_history['CreationDate'] = pd.to_datetime(df_post_history['CreationDate'])
+            recent_date = pd.Timestamp.now() - pd.Timedelta(days=180)
+            recent_post_history = df_post_history[df_post_history['CreationDate'] >= recent_date]
+            post_history_users = set(recent_post_history['UserId'].unique())
+            print(f"Users with recent post history: {len(post_history_users)}")
+        
+        # Combine all active users
+        active_users = list(post_users | comment_users | post_history_users)
+        print(f"Total active users (post/comment/history): {len(active_users)}")
+        
+        # Convert to string for consistency
+        active_users = [str(uid) for uid in active_users if pd.notna(uid)]
+        print(f"Active users after cleaning: {len(active_users)}")
+        
         negative_samples = []
         np.random.seed(42)
-        for post_id, group in df_uplift.groupby('post_id'):
-            liked_users = set(group['user_id'])
-            possible_users = list(all_users - liked_users)
-            # Sample up to N negative users per post (N=number of positive samples)
-            n_neg = len(group)
-            if n_neg == 0 or len(possible_users) == 0:
+        
+        # For each post, find active users who didn't like it within 24 hours
+        posts_with_likes = df_uplift['post_id'].unique()
+        print(f"Processing {len(posts_with_likes)} posts for negative sampling...")
+        
+        for post_id in posts_with_likes[:2000]:  # Process more posts
+            # Get post creation time
+            post_info = df_posts[df_posts['post_id'] == post_id]
+            if len(post_info) == 0:
                 continue
-            sampled_users = np.random.choice(possible_users, size=min(n_neg, len(possible_users)), replace=False)
-            # Assign time_diff_hours: half use recommendation interval (short time), half use non-recommendation interval (long time)
-            for i, user_id in enumerate(sampled_users):
-                # 50% probability to assign to treatment/control
-                if i < len(sampled_users) // 2:
-                    # Recommendation group, time_diff random [0, time_threshold]
-                    time_diff = np.random.uniform(0, time_threshold)
-                    treatment = 1
-                else:
-                    # Control group, time_diff random [time_threshold, max]
-                    time_diff = np.random.uniform(time_threshold, df_uplift['time_diff_hours'].max())
-                    treatment = 0
-                negative_samples.append({
-                    'user_id': user_id,
-                    'post_id': post_id,
-                    'treatment': treatment,
-                    'is_click': 0,
-                    'time_diff_hours': time_diff
-                })
+                
+            post_time = post_info.iloc[0]['CreationDate']
+            
+            # Get users who liked this post
+            liked_users = set(df_uplift[df_uplift['post_id'] == post_id]['user_id'])
+            
+            # Find active users who didn't like this post
+            potential_negative_users = [uid for uid in active_users if uid not in liked_users]
+            
+            if len(potential_negative_users) == 0:
+                continue
+            
+            # Sample negative users (assume they were exposed but didn't click)
+            n_negative = min(len(liked_users) * 2, len(potential_negative_users), 20)  # Reasonable negative samples
+            if n_negative > 0:
+                sampled_users = np.random.choice(potential_negative_users, size=n_negative, replace=False)
+                
+                for user_id in sampled_users:
+                    # Randomly assign treatment/control
+                    treatment = np.random.choice([0, 1], p=[0.5, 0.5])
+                    
+                    # Simulate exposure time: post_time + random hours (0-24 hours)
+                    exposure_hours = np.random.uniform(0, 24)
+                    exposure_time = post_time + pd.Timedelta(hours=exposure_hours)
+                    
+                    # Calculate time difference from post creation to exposure
+                    time_diff_hours = exposure_hours
+                    
+                    negative_samples.append({
+                        'user_id': user_id,
+                        'post_id': post_id,
+                        'treatment': treatment,
+                        'is_click': 0,  # Did not click/like
+                        'time_diff_hours': time_diff_hours,
+                        'exposure_time': exposure_time
+                    })
+        
+        print(f"Created {len(negative_samples)} negative samples")
+        
+        # Combine positive and negative samples
         if negative_samples:
             df_neg = pd.DataFrame(negative_samples)
+            
+            # Add features to negative samples (same as positive samples)
+            df_neg = df_neg.merge(df_posts[['post_id', 'Score', 'ViewCount', 'AnswerCount', 'CommentCount', 'Title', 'OwnerUserId']], 
+                                 on='post_id', how='left')
+            df_neg = df_neg.merge(df_users_clean[['Id', 'Reputation', 'Views', 'UpVotes', 'DownVotes']], 
+                                 left_on='user_id', right_on='Id', how='left')
+            
+            # Add user and post like stats
+            df_neg = df_neg.merge(user_like_stats, left_on='user_id', right_on='UserId', how='left')
+            df_neg['user_total_likes'] = df_neg['user_total_likes'].fillna(0)
+            df_neg = df_neg.merge(post_like_stats, on='post_id', how='left')
+            df_neg['post_total_likes'] = df_neg['post_total_likes'].fillna(0)
+            
+            # Add time-based features
+            df_neg['is_early_vote'] = (df_neg['time_diff_hours'] <= 24).astype(int)
+            df_neg['is_very_early_vote'] = (df_neg['time_diff_hours'] <= 1).astype(int)
+            df_neg['is_late_vote'] = (df_neg['time_diff_hours'] > 168).astype(int)
+            
+            # Fill missing values
+            df_neg['Score'] = df_neg['Score'].fillna(0).astype(float)
+            df_neg['ViewCount'] = df_neg['ViewCount'].fillna(0).astype(float)
+            df_neg['AnswerCount'] = df_neg['AnswerCount'].fillna(0).astype(float)
+            df_neg['CommentCount'] = df_neg['CommentCount'].fillna(0).astype(float)
+            df_neg['Reputation'] = df_neg['Reputation'].fillna(0).astype(float)
+            df_neg['Views'] = df_neg['Views'].fillna(0).astype(float)
+            df_neg['UpVotes'] = df_neg['UpVotes'].fillna(0).astype(float)
+            df_neg['DownVotes'] = df_neg['DownVotes'].fillna(0).astype(float)
+            
+            # Combine positive and negative samples
             df_uplift = pd.concat([df_uplift, df_neg], ignore_index=True)
-        # --- End negative sample addition ---
+        
+        print(f"\nFinal Uplift Sample Generation Results:")
+        print(f"Total samples: {len(df_uplift)}")
+        print(f"Positive samples (liked): {(df_uplift['is_click'] == 1).sum()}")
+        print(f"Negative samples (not liked): {(df_uplift['is_click'] == 0).sum()}")
+        print(f"Treatment group: {df_uplift['treatment'].sum()}")
+        print(f"Control group: {(df_uplift['treatment'] == 0).sum()}")
+        print(f"Overall click rate: {df_uplift['is_click'].mean():.3f}")
+        print(f"Treatment group click rate: {df_uplift[df_uplift['treatment'] == 1]['is_click'].mean():.3f}")
+        print(f"Control group click rate: {df_uplift[df_uplift['treatment'] == 0]['is_click'].mean():.3f}")
+        
+        # Time difference analysis
+        treatment_time_diff = df_uplift[df_uplift['treatment'] == 1]['time_diff_hours']
+        control_time_diff = df_uplift[df_uplift['treatment'] == 0]['time_diff_hours']
+        
+        print(f"\nTime Difference Analysis:")
+        print(f"Treatment group (recommended) - Avg time diff: {treatment_time_diff.mean():.2f} hours")
+        print(f"Control group (not recommended) - Avg time diff: {control_time_diff.mean():.2f} hours")
+        print(f"Treatment group - Median time diff: {treatment_time_diff.median():.2f} hours")
+        print(f"Control group - Median time diff: {control_time_diff.median():.2f} hours")
         
         self.df_uplift = df_uplift
         return df_uplift
