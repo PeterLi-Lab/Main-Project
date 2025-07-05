@@ -755,22 +755,22 @@ class DataPreprocessor:
     def create_semantic_embeddings(self, embeddings_path='output/semantic_embeddings.npy'):
         """Create semantic embeddings for titles, with save/load support"""
         print("\n=== Creating Semantic Embeddings ===")
-        # 优先尝试加载
+        # Prefer to load if available
         if os.path.exists(embeddings_path):
             print(f"Loading cached semantic embeddings from {embeddings_path}")
             self.embeddings = np.load(embeddings_path)
             print(f"Loaded embeddings with shape: {self.embeddings.shape}")
             return self.embeddings
-        # 否则重新生成
+        # Otherwise regenerate
         self.model = SentenceTransformer('all-MiniLM-L6-v2')
         titles = self.df_combined['Title'].fillna('').tolist()
         print("Encoding titles...")
         self.embeddings = self.model.encode(titles, show_progress_bar=True)
-        # 保存到npy
+        # Save to npy
         os.makedirs(os.path.dirname(embeddings_path), exist_ok=True)
         np.save(embeddings_path, self.embeddings)
         print(f"Saved embeddings to {embeddings_path}")
-        # 统计
+        # Statistics
         title_embeddings_df = pd.DataFrame(self.embeddings)
         self.df_combined['title_embedding_mean'] = title_embeddings_df.mean(axis=1)
         self.df_combined['title_embedding_std'] = title_embeddings_df.std(axis=1)

@@ -75,7 +75,7 @@ class CTRModelTrainer:
         """Create features for CTR prediction"""
         print("\n=== Creating Features ===")
         
-        # 定义特征处理任务
+        # Define feature processing tasks
         feature_tasks = [
             ('post_title_length', 'post_title', lambda x: x.str.len().fillna(0)),
             ('post_body_length', 'post_body', lambda x: x.str.len().fillna(0)),
@@ -92,7 +92,7 @@ class CTRModelTrainer:
         for feat_name, col_name, func in tqdm(feature_tasks, desc="Feature engineering"):
             if col_name in self.df_ctr.columns:
                 if feat_name == 'post_age_days':
-                    # 日期健壮处理
+                    # Robust date handling
                     mask = (self.df_ctr[col_name] != "0") & (self.df_ctr[col_name].notnull())
                     self.df_ctr[feat_name] = 0
                     self.df_ctr.loc[mask, feat_name] = (
@@ -103,7 +103,7 @@ class CTRModelTrainer:
             else:
                 self.df_ctr[feat_name] = 0
         
-        # interest_score 特征
+        # interest_score feature
         if 'interest_score' not in self.df_ctr.columns:
             self.df_ctr['interest_score'] = 0
         
@@ -114,7 +114,7 @@ class CTRModelTrainer:
             'interest_score'
         ]
         
-        # 填充所有特征的缺失值
+        # Fill missing values for all features
         for col in self.feature_columns:
             if col in self.df_ctr.columns:
                 self.df_ctr[col] = self.df_ctr[col].fillna(0)

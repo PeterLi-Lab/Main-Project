@@ -167,7 +167,7 @@ class UpliftTreatmentLabeling:
     def save_standard_uplift_table(self, output_path='uplift_model_data.csv'):
         """Save standard uplift modeling table: user_id, post_id, treatment, response (AI only)"""
         print(f"\n=== Saving Standard Uplift Table (AI treatment only) ===")
-        # treatment=1: AI相关内容，0: 普通内容
+        # treatment=1: AI-related content, 0: normal content
         self.df_samples['treatment'] = self.df_samples['treatment_ai_content']
         self.df_samples['response'] = self.df_samples['is_click']
         uplift_table = self.df_samples[['user_id', 'post_id', 'treatment', 'response']].copy()
