@@ -222,3 +222,89 @@ This system demonstrates industrial-grade machine learning practices. Contributi
 ## License
 
 MIT License - see LICENSE file for details.
+
+# StackExchange Modeling-Ready Dataset Pipeline
+
+## Overview
+This project provides a full pipeline to transform raw StackExchange XML logs into a modeling-ready dataset for tasks such as CTR prediction, retention modeling, and uplift modeling. The pipeline includes:
+- Data cleaning and feature engineering
+- User-post click labeling (for implicit feedback modeling)
+- Uplift treatment labeling (for causal inference and uplift modeling)
+
+---
+
+## Key Scripts
+
+### 1. `build_feature_dataset.py`
+- **Purpose:**
+  - Parses and cleans raw XML files (Posts, Users, Votes, Comments, etc.)
+  - Engineers user-level, post-level, and interaction-level features
+  - Outputs a post-level feature table for downstream modeling
+- **Output:**
+  - `feature_table.csv`
+
+### 2. `user_post_click_labeling.py`
+- **Purpose:**
+  - Constructs a user-post pair dataset with a binary click label (`is_click`)
+  - **Positive samples:** For each upvoted post, randomly assign N active users as "clickers"
+  - **Negative samples:** For each upvoted post, sample N active users who did not upvote as "non-clickers", prioritizing those with similar tag interests
+  - Adds user and post features to each pair
+- **Output:**
+  - `user_post_click_samples.csv` (full dataset)
+  - `user_post_click_samples_sample.csv` (sample for inspection)
+
+### 3. `uplift_treatment_labeling.py`
+- **Purpose:**
+  - Adds treatment labels to the user-post click dataset based on post content tags (e.g., AI, web development, etc.)
+  - Simulates "treatment" (exposure to certain content) for uplift modeling
+  - Computes uplift features and analyzes treatment effects
+- **Tag Parsing Logic:**
+  - Tags are parsed from the StackExchange format: `|tag1|tag2|` → `["tag1", "tag2"]`
+  - Treatment is assigned if any tag in a post matches the configured treatment tag list (e.g., AI/ML tags)
+- **Output:**
+  - `uplift_dataset.csv` (user-post-treatment dataset for uplift modeling)
+
+---
+
+## Example: Simulating Treatment with Tags
+To simulate "treatment" (e.g., AI content exposure):
+```python
+# In uplift_treatment_labeling.py
+ai_tags = ['ai', 'artificial-intelligence', 'machine-learning', ...]
+df_samples['treatment_ai'] = df_samples['post_tags'].apply(lambda tags: any(tag in ai_tags for tag in tags))
+```
+
+---
+
+## How to Run
+1. **Feature Engineering:**
+   ```bash
+   python build_feature_dataset.py
+   ```
+2. **User-Post Click Labeling:**
+   ```bash
+   python user_post_click_labeling.py
+   ```
+3. **Uplift Treatment Labeling:**
+   ```bash
+   python uplift_treatment_labeling.py
+   ```
+
+---
+
+## Output Files
+- `feature_table.csv`: Post-level features for modeling
+- `user_post_click_samples.csv`: User-post pairs with click labels and features
+- `uplift_dataset.csv`: User-post-treatment dataset for uplift modeling
+
+---
+
+## Notes
+- **Tag Parsing:** All tag parsing uses the StackExchange pipe format: `|tag1|tag2|` → `["tag1", "tag2"]`
+- **Treatment Assignment:** You can easily configure new treatments by editing the `treatments` dictionary in `uplift_treatment_labeling.py`.
+- **Scalability:** The pipeline is designed for large XML files and can be extended for more advanced modeling tasks.
+
+---
+
+## Contact
+For questions or improvements, please open an issue or contact the maintainer.

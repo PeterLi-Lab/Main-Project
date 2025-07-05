@@ -11,6 +11,7 @@ import random
 import re
 from collections import defaultdict
 import warnings
+from tqdm import tqdm
 warnings.filterwarnings('ignore')
 
 class UserPostClickLabeling:
@@ -49,9 +50,9 @@ class UserPostClickLabeling:
         # Handle missing tags
         self.df_posts['Tags'] = self.df_posts['Tags'].fillna('')
         
-        # Parse tags properly
+        # Parse tags properly - StackExchange uses pipe-separated format like |machine-learning|
         self.df_posts['TagList'] = self.df_posts['Tags'].apply(
-            lambda x: re.findall(r'<(.*?)>', x) if pd.notna(x) and x != '' else []
+            lambda x: re.findall(r'\|([^|]+)\|', x) if pd.notna(x) and x != '' else []
         )
         
         # Convert CreationDate to datetime
@@ -114,7 +115,8 @@ class UserPostClickLabeling:
         
         user_tag_history = defaultdict(set)
         
-        for _, row in self.df_posts.iterrows():
+        # Add progress bar for building user tag history
+        for _, row in tqdm(self.df_posts.iterrows(), desc="Building user tag history", total=len(self.df_posts)):
             user_id = str(row['OwnerUserId'])
             tags = row['TagList']
             if tags:  # Only add if tags exist
@@ -122,6 +124,23 @@ class UserPostClickLabeling:
         
         print(f"User tag history built for {len(user_tag_history)} users")
         return user_tag_history
+    
+    def build_tag_user_index(self):
+        """Build tag to users index for fast negative sampling"""
+        print("\n=== Building Tag-User Index ===")
+        
+        tag_user_dict = defaultdict(set)
+        
+        # Add progress bar for building tag-user index
+        for _, row in tqdm(self.df_posts.iterrows(), desc="Building tag-user index", total=len(self.df_posts)):
+            user_id = str(row['OwnerUserId'])
+            tags = row['TagList']
+            if tags:  # Only add if tags exist
+                for tag in tags:
+                    tag_user_dict[tag].add(user_id)
+        
+        print(f"Tag-user index built for {len(tag_user_dict)} tags")
+        return tag_user_dict
     
     def create_positive_samples(self, active_users, upvoted_posts, N=5):
         """Create positive samples for upvoted posts (assign random active users as clickers)"""
@@ -143,33 +162,59 @@ class UserPostClickLabeling:
                 })
         print(f"Created {len(positive_samples)} positive samples")
         return positive_samples, assigned_users_per_post
-    
-    def create_negative_samples(self, active_users, upvoted_posts, user_tag_history, assigned_users_per_post, N=5):
-        """Create negative samples with interest-based prioritization"""
-        print(f"\n=== Creating Negative Samples (N={N}) ===")
+
+    def create_negative_samples(self, active_users, upvoted_posts, tag_user_dict, assigned_users_per_post, N=5, ratio=3):
+        """Create negative samples with optimized interest-based sampling using tag-user index"""
+        print(f"\n=== Creating Negative Samples (N={N}, ratio=1:{ratio}) ===")
         negative_samples = []
-        for post_id in upvoted_posts:
+        
+        # Calculate how many negative samples we need per post to achieve 1:ratio
+        negative_samples_per_post = N * ratio
+        
+        # Convert to list for progress bar
+        upvoted_posts_list = list(upvoted_posts)
+        
+        # Add progress bar for post processing
+        for post_id in tqdm(upvoted_posts_list, desc="Processing posts for negative samples"):
             post_row = self.df_posts[self.df_posts['Id'] == post_id]
             if len(post_row) == 0:
                 continue
             post_tags = set(post_row.iloc[0]['TagList'])
+            
+            # Use optimized candidate selection based on tag-user index
+            candidate_users = set()
+            for tag in post_tags:
+                candidate_users |= tag_user_dict.get(tag, set())
+            
+            # Filter to active users only
+            candidate_users &= set(active_users)
+            
             # Exclude users assigned as positive for this post
-            candidate_users = set(active_users) - assigned_users_per_post.get(post_id, set())
-            # Calculate interest scores
-            user_interest = []
-            for user_id in candidate_users:
-                user_tags = user_tag_history.get(user_id, set())
-                interest_score = len(post_tags & user_tags)
-                user_interest.append((user_id, interest_score))
-            user_interest.sort(key=lambda x: -x[1])
-            sampled_users = user_interest[:N]
-            for user_id, interest_score in sampled_users:
+            candidate_users -= assigned_users_per_post.get(post_id, set())
+            
+            # If we have enough candidates, sample them
+            if len(candidate_users) >= negative_samples_per_post:
+                sampled_users = random.sample(list(candidate_users), negative_samples_per_post)
+            else:
+                # If not enough candidates, use all available
+                sampled_users = list(candidate_users)
+            
+            # Add negative samples
+            for user_id in sampled_users:
+                # Calculate interest score for this user-post pair
+                user_tags = set()
+                for tag in post_tags:
+                    if user_id in tag_user_dict.get(tag, set()):
+                        user_tags.add(tag)
+                interest_score = len(user_tags)
+                
                 negative_samples.append({
                     'user_id': user_id,
                     'post_id': post_id,
                     'is_click': 0,
                     'interest_score': interest_score
                 })
+        
         print(f"Created {len(negative_samples)} negative samples")
         return negative_samples
     
@@ -178,17 +223,24 @@ class UserPostClickLabeling:
         print("=== Starting User-Post Click Labeling ===")
         self.load_and_clean_data()
         active_users = self.identify_active_users(recent_days)
+        
+        # Build optimized indices
         user_tag_history = self.build_user_tag_history()
+        tag_user_dict = self.build_tag_user_index()
+        
         # Use all posts with at least one upvote (VoteTypeId==2)
         upvotes = self.df_votes[self.df_votes['VoteTypeId'] == '2']
         upvoted_posts = set(upvotes['PostId'])
         print(f"Upvoted posts: {len(upvoted_posts)}")
+        
         if not upvoted_posts or not active_users:
             print("No upvoted posts or active users found. No samples will be created.")
             self.df_samples = pd.DataFrame()
             return self.df_samples
+            
         positive_samples, assigned_users_per_post = self.create_positive_samples(active_users, upvoted_posts, N)
-        negative_samples = self.create_negative_samples(active_users, upvoted_posts, user_tag_history, assigned_users_per_post, N)
+        negative_samples = self.create_negative_samples(active_users, upvoted_posts, tag_user_dict, assigned_users_per_post, N, ratio=3)
+        
         all_samples = positive_samples + negative_samples
         self.df_samples = pd.DataFrame(all_samples)
         print(f"\n=== Sample Creation Complete ===")
