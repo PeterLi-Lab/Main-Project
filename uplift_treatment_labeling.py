@@ -7,6 +7,8 @@ Adds treatment labels to user-post click dataset based on content tags
 import pandas as pd
 import numpy as np
 import xml.etree.ElementTree as ET
+import os
+from collections import defaultdict
 
 class UpliftTreatmentLabeling:
     def __init__(self):
@@ -17,10 +19,9 @@ class UpliftTreatmentLabeling:
         # Define treatment configurations
         self.treatments = {
             'ai_content': {
-                'tags': ['ai', 'artificial-intelligence', 'machine-learning', 'deep-learning', 
-                        'neural-network', 'tensorflow', 'pytorch', 'scikit-learn', 'nlp', 
-                        'computer-vision', 'data-science'],
-                'description': 'AI/ML related content'
+                'tags': ['machine-learning', 'deep-learning', 'neural-network', 
+                        'tensorflow', 'pytorch', 'scikit-learn', 'keras', 'nlp'],
+                'description': 'AI/ML related content (precise)'
             },
             'web_development': {
                 'tags': ['javascript', 'html', 'css', 'react', 'angular', 'vue', 'nodejs', 
@@ -38,6 +39,10 @@ class UpliftTreatmentLabeling:
                 'description': 'Database related content'
             }
         }
+        self.df_users = None
+        self.df_posts = None
+        self.user_tag_map = None
+        self.post_tags_map = None
     
     def parse_tags(self, tags_str):
         """Parse tags from pipe-separated format: '|tag1|tag2|' -> ['tag1', 'tag2']"""
@@ -78,7 +83,72 @@ class UpliftTreatmentLabeling:
             print(f"  Post {post_id}: {tags}")
         
         return True
-    
+
+    def load_feature_tables(self):
+        """Load user and post features from preprocessing output"""
+        print("Loading user and post features from preprocessing...")
+        self.df_users = pd.read_csv('output/user_features.csv')
+        self.df_posts = pd.read_csv('output/post_features.csv')
+        print(f"Loaded {len(self.df_users)} user features, {len(self.df_posts)} post features")
+        return True
+
+    def build_tag_maps(self):
+        """Build user tag map and post tag map from samples"""
+        print("Building user and post tag maps...")
+        self.user_tag_map = defaultdict(set)
+        self.post_tags_map = {}
+        for _, row in self.df_samples.iterrows():
+            self.user_tag_map[row['user_id']].update(row['post_tags'])
+            self.post_tags_map[str(row['post_id'])] = row['post_tags']
+        print(f"Built user_tag_map for {len(self.user_tag_map)} users, post_tags_map for {len(self.post_tags_map)} posts")
+        return True
+
+    def compute_user_ai_interest(self, ai_tags):
+        """Compute user AI/ML interest score based on past interactions"""
+        # More sophisticated AI interest calculation
+        self.df_samples['is_ai_post'] = self.df_samples['post_tags'].apply(
+            lambda tags: any(tag in ai_tags for tag in tags)
+        )
+        
+        # Calculate user AI interest with more weight for recent interactions
+        user_ai_interest = self.df_samples.groupby('user_id').agg({
+            'is_ai_post': ['mean', 'sum', 'count']
+        }).reset_index()
+        user_ai_interest.columns = ['user_id', 'user_ai_interest_score', 'user_ai_interactions', 'user_total_interactions']
+        
+        # Calculate weighted AI interest score
+        user_ai_interest['user_ai_interest_weighted'] = (
+            user_ai_interest['user_ai_interest_score'] * 
+            (user_ai_interest['user_ai_interactions'] / user_ai_interest['user_total_interactions'])
+        )
+        
+        self.df_samples = self.df_samples.merge(user_ai_interest, on='user_id', how='left')
+        return True
+
+    def compute_user_post_tag_overlap(self):
+        def overlap(row):
+            user_tags = self.user_tag_map.get(row['user_id'], set())
+            post_tags = set(self.post_tags_map.get(str(row['post_id']), []))
+            return len(user_tags & post_tags)
+        self.df_samples['user_post_tag_overlap'] = self.df_samples.apply(overlap, axis=1)
+        return True
+
+    def compute_user_previous_ai_click_rate(self):
+        user_prev_ai_click = self.df_samples.groupby('user_id')['treatment_ai_content'].mean().reset_index()
+        user_prev_ai_click.rename(columns={'treatment_ai_content': 'user_previous_ai_click_rate'}, inplace=True)
+        self.df_samples = self.df_samples.merge(user_prev_ai_click, on='user_id', how='left')
+        return True
+
+    def add_interaction_term(self):
+        self.df_samples['ai_interest_x_treatment'] = self.df_samples['user_ai_interest_score'] * self.df_samples['treatment_ai_content']
+        return True
+
+    def merge_real_features(self):
+        print("Merging real user and post features...")
+        self.df_samples = self.df_samples.merge(self.df_users, left_on='user_id', right_on='Id', how='left')
+        self.df_samples = self.df_samples.merge(self.df_posts, left_on='post_id', right_on='Id_x', how='left')
+        return True
+
     def add_treatment_labels(self):
         """Add treatment labels based on post tags"""
         print("\n=== Adding Treatment Labels ===")
@@ -152,6 +222,48 @@ class UpliftTreatmentLabeling:
         
         print("Uplift features created!")
         return True
+
+    def add_content_quality_features(self):
+        """Add content quality and engagement features"""
+        # Content quality based on post features
+        if 'Score' in self.df_samples.columns and 'ViewCount' in self.df_samples.columns:
+            self.df_samples['content_quality_score'] = (
+                self.df_samples['Score'] / (self.df_samples['ViewCount'] + 1)
+            )
+        
+        # Engagement rate
+        if 'total_votes' in self.df_samples.columns and 'post_age_days' in self.df_samples.columns:
+            self.df_samples['engagement_rate'] = (
+                self.df_samples['total_votes'] / (self.df_samples['post_age_days'] + 1)
+            )
+        
+        # Content complexity
+        if 'post_length' in self.df_samples.columns and 'title_length' in self.df_samples.columns:
+            self.df_samples['content_complexity'] = (
+                self.df_samples['post_length'] / (self.df_samples['title_length'] + 1)
+            )
+        
+        return True
+
+    def add_user_behavior_features(self):
+        """Add user behavior and interaction features"""
+        # User activity level
+        if 'user_post_count' in self.df_samples.columns:
+            self.df_samples['user_activity_level'] = pd.cut(
+                self.df_samples['user_post_count'],
+                bins=[0, 1, 5, 10, 25, float('inf')],
+                labels=['Inactive', 'Low', 'Medium', 'High', 'Very High']
+            )
+        
+        # User reputation level
+        if 'user_reputation' in self.df_samples.columns:
+            self.df_samples['user_reputation_level'] = pd.cut(
+                self.df_samples['user_reputation'],
+                bins=[0, 100, 500, 1000, 5000, float('inf')],
+                labels=['New', 'Beginner', 'Intermediate', 'Advanced', 'Expert']
+            )
+        
+        return True
     
     def analyze_treatment_effects(self):
         """Analyze treatment effects"""
@@ -182,19 +294,32 @@ class UpliftTreatmentLabeling:
         return True
     
     def save_uplift_dataset(self, output_path='uplift_dataset.csv'):
-        """Save the uplift dataset"""
+        """Save the uplift dataset with improved feature selection"""
         print(f"\n=== Saving Uplift Dataset ===")
         
-        # Select relevant columns
-        feature_columns = [
+        # Define feature columns that should exist
+        potential_feature_columns = [
             'user_id', 'post_id', 'is_click', 'response', 'engagement_score',
             'user_post_count', 'user_account_age_days', 'post_title_length', 
-            'post_tag_count', 'interest_score', 'user_post_interaction'
+            'post_tag_count', 'interest_score', 'user_post_interaction',
+            'user_ai_interest_score', 'user_ai_interest_weighted', 'user_ai_interactions',
+            'content_quality_score', 'engagement_rate', 'content_complexity',
+            'user_activity_level', 'user_reputation_level',
+            'user_reputation', 'Score', 'ViewCount', 'AnswerCount', 'CommentCount', 
+            'title_length', 'post_length', 'num_tags', 'post_age_days', 
+            'total_votes', 'upvotes', 'user_post_tag_overlap', 
+            'user_previous_ai_click_rate', 'ai_interest_x_treatment'
         ]
         
         # Add treatment columns
         treatment_columns = [f'treatment_{name}' for name in self.treatments.keys()]
-        feature_columns.extend(treatment_columns)
+        potential_feature_columns.extend(treatment_columns)
+        
+        # Only keep columns that actually exist
+        feature_columns = [col for col in potential_feature_columns if col in self.df_samples.columns]
+        
+        print(f"Available features: {len(feature_columns)}")
+        print(f"Feature columns: {feature_columns[:10]}...")  # Show first 10
         
         # Create and save uplift dataset
         uplift_dataset = self.df_samples[feature_columns].copy()
@@ -215,31 +340,76 @@ class UpliftTreatmentLabeling:
         uplift_table.to_csv(output_path, index=False)
         print(f"Standard uplift table saved to {output_path}, shape: {uplift_table.shape}")
         return uplift_table
-    
+
+    def save_final_uplift_table(self, output_path='uplift_model_data.csv'):
+        """Save final uplift modeling table with improved features"""
+        print(f"\n=== Saving Final Uplift Modeling Table ===")
+        
+        # Define improved feature set
+        potential_uplift_features = [
+            'user_ai_interest_score', 'user_ai_interest_weighted', 'user_ai_interactions',
+            'user_reputation', 'user_post_count', 'user_account_age_days',
+            'total_badges', 'gold_badges', 'silver_badges', 'bronze_badges', 
+            'unique_badge_types', 'badge_rate_per_day', 'recent_badges_30d',
+            'badge_quality_score', 'Score', 'ViewCount', 'AnswerCount', 'CommentCount', 
+            'title_length', 'post_length', 'num_tags', 'post_age_days', 
+            'total_votes', 'upvotes', 'user_post_tag_overlap', 
+            'user_previous_ai_click_rate', 'ai_interest_x_treatment',
+            'content_quality_score', 'engagement_rate', 'content_complexity',
+            'user_activity_level', 'user_reputation_level',
+            'treatment_ai_content', 'response'
+        ]
+        
+        # Only keep columns that exist
+        uplift_features = [col for col in potential_uplift_features if col in self.df_samples.columns]
+        
+        # Fill missing values properly for different data types
+        for col in uplift_features:
+            if col in self.df_samples.columns:
+                if self.df_samples[col].dtype.name == 'category':
+                    # For categorical columns, fill with the most common category
+                    most_common = self.df_samples[col].mode().iloc[0] if len(self.df_samples[col].mode()) > 0 else self.df_samples[col].iloc[0]
+                    self.df_samples[col] = self.df_samples[col].fillna(most_common)
+                else:
+                    # For numeric columns, fill with 0
+                    self.df_samples[col] = self.df_samples[col].fillna(0)
+        
+        final_uplift_df = self.df_samples[uplift_features].copy()
+        final_uplift_df.to_csv(output_path, index=False)
+        
+        print(f"Final uplift modeling table saved to {output_path}, shape: {final_uplift_df.shape}")
+        print(f"Features used: {len(uplift_features)}")
+        return final_uplift_df
+
     def run_pipeline(self):
-        """Run the complete uplift treatment labeling pipeline"""
-        print("=== Uplift Treatment Labeling Pipeline ===")
+        """Run the complete uplift treatment labeling pipeline with improvements"""
+        print("=== Uplift Treatment Labeling Pipeline (Improved) ===")
         
         # Step 1: Load data
         self.load_data()
-        
-        # Step 2: Add treatment labels
+        self.load_feature_tables()
         self.add_treatment_labels()
+        self.merge_real_features()
+        self.build_tag_maps()
         
-        # Step 3: Create uplift features
+        # Step 2: Improved feature engineering
+        ai_tags = self.treatments['ai_content']['tags']
+        self.compute_user_ai_interest(ai_tags)
+        self.compute_user_post_tag_overlap()
+        self.compute_user_previous_ai_click_rate()
+        self.add_interaction_term()
+        self.add_content_quality_features()
+        self.add_user_behavior_features()
         self.create_uplift_features()
         
-        # Step 4: Analyze treatment effects
+        # Step 3: Analysis and saving
         self.analyze_treatment_effects()
-        
-        # Step 5: Save dataset
-        uplift_dataset = self.save_uplift_dataset()
-        
-        # Step 6: Save standard uplift modeling table (AI only)
+        self.save_uplift_dataset()
         self.save_standard_uplift_table()
+        self.save_final_uplift_table()
         
         print("\n=== Pipeline Complete ===")
-        return uplift_dataset
+        return True
 
 def main():
     """Main function"""

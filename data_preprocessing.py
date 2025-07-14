@@ -2323,3 +2323,32 @@ if __name__ == "__main__":
     print(f"\nFinal dataset shape: {df_combined.shape}")
     print(f"Embeddings shape: {embeddings.shape}")
     print(f"TF-IDF features shape: {tfidf_features.shape}") 
+    
+    # --- Export user features from the users table ---
+    df_users = preprocessor.df_users.copy()
+    # Compute account age in days if not present
+    if 'CreationDate' in df_users.columns:
+        df_users['CreationDate'] = pd.to_datetime(df_users['CreationDate'])
+        df_users['user_account_age_days'] = (pd.Timestamp.now() - df_users['CreationDate']).dt.days
+    else:
+        df_users['user_account_age_days'] = 0
+
+    user_features = [
+        'Id', 'user_reputation', 'user_post_count', 'user_account_age_days',
+        'total_badges', 'gold_badges', 'silver_badges', 'bronze_badges',
+        'unique_badge_types', 'badge_rate_per_day', 'recent_badges_30d',
+        'badge_quality_score'
+    ]
+    # Only keep columns that exist
+    user_features_existing = [col for col in user_features if col in df_users.columns]
+    df_users[user_features_existing].to_csv('output/user_features.csv', index=False)
+
+    # --- Export post features from df_combined ---
+    post_features = [
+        'Id_x', 'Score', 'ViewCount', 'AnswerCount', 'CommentCount', 'title_length',
+        'post_length', 'num_tags', 'post_age_days', 'total_votes', 'upvotes'
+    ]
+    post_features_existing = [col for col in post_features if col in df_combined.columns]
+    df_combined[post_features_existing].drop_duplicates(subset=['Id_x']).to_csv('output/post_features.csv', index=False)
+
+    print("Exported user and post features to output/user_features.csv and output/post_features.csv")
