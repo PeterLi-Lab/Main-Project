@@ -10,6 +10,9 @@ from sklearn.preprocessing import StandardScaler
 import xgboost as xgb
 import warnings
 warnings.filterwarnings('ignore')
+from causalml.inference.meta import BaseXRegressor
+from xgboost import XGBRegressor
+from tqdm import tqdm
 
 class ImprovedUpliftAnalysis:
     def __init__(self):
@@ -275,6 +278,11 @@ class ImprovedUpliftAnalysis:
         treatment = treatment[valid_mask]
         response = response[valid_mask]
         
+        # Ensure all data is numeric
+        X = X.astype(float)
+        treatment = treatment.astype(int)
+        response = response.astype(float)
+        
         # Split data
         X_train, X_test, t_train, t_test, y_train, y_test = train_test_split(
             X, treatment, response, test_size=0.2, random_state=42, stratify=treatment
@@ -286,17 +294,21 @@ class ImprovedUpliftAnalysis:
         # Calculate actual uplift
         actual_uplift = y_test[t_test == 1].mean() - y_test[t_test == 0].mean()
         
-        # 1. Linear Regression (Simple and Interpretable)
-        print("\n--- Linear Regression Two-Model ---")
-        self.train_linear_models(X_train, X_test, t_train, t_test, y_train, y_test, actual_uplift)
+        # Train models with progress tracking
+        models_to_train = [
+            ("Linear Regression Two-Model", self.train_linear_models),
+            ("Random Forest with Cross-Validation", self.train_random_forest_cv),
+            ("XGBoost with Cross-Validation", self.train_xgboost_cv),
+            ("X-Learner (CausalML)", self.train_xlearner)
+        ]
         
-        # 2. Random Forest with Cross-Validation
-        print("\n--- Random Forest with Cross-Validation ---")
-        self.train_random_forest_cv(X_train, X_test, t_train, t_test, y_train, y_test, actual_uplift)
-        
-        # 3. XGBoost with Cross-Validation
-        print("\n--- XGBoost with Cross-Validation ---")
-        self.train_xgboost_cv(X_train, X_test, t_train, t_test, y_train, y_test, actual_uplift)
+        for model_name, train_func in tqdm(models_to_train, desc="Training models"):
+            print(f"\n--- {model_name} ---")
+            try:
+                train_func(X_train, X_test, t_train, t_test, y_train, y_test, actual_uplift)
+            except Exception as e:
+                print(f"  {model_name} training failed: {e}")
+                print(f"  Skipping {model_name}")
         
         return True
     
@@ -374,20 +386,32 @@ class ImprovedUpliftAnalysis:
             X_control = X_train[control_mask_train]
             y_control = y_train[control_mask_train]
             
-            # Train models
-            treatment_model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
-            control_model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
+            print("  Training Random Forest models...")
             
-            treatment_model.fit(X_treatment, y_treatment)
-            control_model.fit(X_control, y_control)
-            
-            # Predict uplift
-            y_pred_treatment = treatment_model.predict(X_test)
-            y_pred_control = control_model.predict(X_test)
-            uplift_predictions = y_pred_treatment - y_pred_control
+            # Train models with progress tracking
+            with tqdm(total=4, desc="Random Forest training steps") as pbar:
+                # Step 1: Initialize models
+                treatment_model = RandomForestRegressor(max_depth=6, n_estimators=50, random_state=42, n_jobs=-1)
+                control_model = RandomForestRegressor(max_depth=6, n_estimators=50, random_state=42, n_jobs=-1)
+                pbar.update(1)
+                
+                # Step 2: Train treatment model
+                treatment_model.fit(X_treatment, y_treatment)
+                pbar.update(1)
+                
+                # Step 3: Train control model
+                control_model.fit(X_control, y_control)
+                pbar.update(1)
+                
+                # Step 4: Make predictions
+                y_pred_treatment = treatment_model.predict(X_test)
+                y_pred_control = control_model.predict(X_test)
+                # uplift_predictions = y_pred_treatment - y_pred_control
+                uplift_predictions = y_pred_treatment[t_test == 1].mean() - y_pred_control[t_test == 0].mean()
+                pbar.update(1)
             
             # Calculate metrics
-            predicted_uplift = uplift_predictions.mean()
+            predicted_uplift = uplift_predictions
             uplift_error = abs(actual_uplift - predicted_uplift)
             uplift_accuracy = max(0, 1 - uplift_error / abs(actual_uplift)) if actual_uplift != 0 else 0
             
@@ -415,6 +439,10 @@ class ImprovedUpliftAnalysis:
             print(f"  Uplift accuracy: {uplift_accuracy:.2%}")
             print(f"  CV R² (Treatment): {cv_scores_treatment.mean():.4f} ± {cv_scores_treatment.std():.4f}")
             print(f"  CV R² (Control): {cv_scores_control.mean():.4f} ± {cv_scores_control.std():.4f}")
+            
+            return True
+        
+        return False
     
     def train_xgboost_cv(self, X_train, X_test, t_train, t_test, y_train, y_test, actual_uplift):
         """Train XGBoost with cross-validation"""
@@ -427,38 +455,57 @@ class ImprovedUpliftAnalysis:
             X_control = X_train[control_mask_train]
             y_control = y_train[control_mask_train]
             
-            # Ensure all features are numeric
-            X_treatment = X_treatment.astype(float)
-            X_control = X_control.astype(float)
-            X_test = X_test.astype(float)
+            print("  Training XGBoost models...")
             
-            # Train models
-            treatment_model = xgb.XGBRegressor(
-                n_estimators=50,
-                max_depth=4,
-                learning_rate=0.1,
-                random_state=42,
-                verbosity=0
-            )
-            control_model = xgb.XGBRegressor(
-                n_estimators=50,
-                max_depth=4,
-                learning_rate=0.1,
-                random_state=42,
-                verbosity=0
-            )
-            
-            try:
-                treatment_model.fit(X_treatment, y_treatment)
-                control_model.fit(X_control, y_control)
+            # Train models with progress tracking
+            with tqdm(total=5, desc="XGBoost training steps") as pbar:
+                # Step 1: Initialize models
+                treatment_model = xgb.XGBRegressor(
+                    n_estimators=50,
+                    max_depth=4,
+                    subsample=0.7,
+                    learning_rate=0.1,
+                    random_state=42,
+                    verbosity=0,
+                    enable_categorical=False  # Ensure no categorical features
+                )
+                control_model = xgb.XGBRegressor(
+                    n_estimators=50,
+                    max_depth=4,
+                    subsample=0.7,
+                    learning_rate=0.1,
+                    random_state=42,
+                    verbosity=0,
+                    enable_categorical=False  # Ensure no categorical features
+                )
+                pbar.update(1)
                 
-                # Predict uplift
+                # Step 2: Ensure data types are correct
+                X_treatment = X_treatment.values.astype(np.float32)
+                X_control = X_control.values.astype(np.float32)
+                X_test = X_test.values.astype(np.float32)
+                y_treatment = y_treatment.values.astype(np.float32)
+                y_control = y_control.values.astype(np.float32)
+                pbar.update(1)
+                
+                # Step 3: Train treatment model
+                treatment_model.fit(X_treatment, y_treatment)
+                pbar.update(1)
+                
+                # Step 4: Train control model
+                control_model.fit(X_control, y_control)
+                pbar.update(1)
+                
+                # Step 5: Make predictions
                 y_pred_treatment = treatment_model.predict(X_test)
                 y_pred_control = control_model.predict(X_test)
-                uplift_predictions = y_pred_treatment - y_pred_control
-                
+                # uplift_predictions = y_pred_treatment - y_pred_control
+                uplift_predictions = y_pred_treatment[t_test == 1].mean() - y_pred_control[t_test == 0].mean()
+                pbar.update(1)
+            
+            try:
                 # Calculate metrics
-                predicted_uplift = uplift_predictions.mean()
+                predicted_uplift = uplift_predictions
                 uplift_error = abs(actual_uplift - predicted_uplift)
                 uplift_accuracy = max(0, 1 - uplift_error / abs(actual_uplift)) if actual_uplift != 0 else 0
                 
@@ -487,9 +534,91 @@ class ImprovedUpliftAnalysis:
                 print(f"  CV R² (Treatment): {cv_scores_treatment.mean():.4f} ± {cv_scores_treatment.std():.4f}")
                 print(f"  CV R² (Control): {cv_scores_control.mean():.4f} ± {cv_scores_control.std():.4f}")
                 
+                return True
+                
             except Exception as e:
                 print(f"  XGBoost training failed: {e}")
                 print("  Skipping XGBoost model")
+                return False
+        
+        return False
+    
+    def train_xlearner(self, X_train, X_test, t_train, t_test, y_train, y_test, actual_uplift):
+        """Train X-Learner using CausalML with improved performance"""
+        try:
+            print("  Training X-Learner model...")
+            
+            # Skip X-Learner if data is too large to avoid memory issues
+            if len(X_train) > 100000:
+                print("  Data too large for X-Learner, skipping...")
+                return False
+            
+            # Sample data to avoid memory issues (use 20% of data)
+            sample_size = min(10000, len(X_train))
+            if len(X_train) > sample_size:
+                print(f"  Sampling {sample_size} samples for X-Learner (original: {len(X_train)})")
+                sample_indices = np.random.choice(len(X_train), sample_size, replace=False)
+                X_train_sample = X_train.iloc[sample_indices]
+                t_train_sample = t_train.iloc[sample_indices]
+                y_train_sample = y_train.iloc[sample_indices]
+            else:
+                X_train_sample = X_train
+                t_train_sample = t_train
+                y_train_sample = y_train
+            
+            # Use lightweight base learner for X-Learner
+            from sklearn.ensemble import RandomForestRegressor
+            base_learner = RandomForestRegressor(max_depth=6, n_estimators=50, random_state=42, n_jobs=-1)
+            
+            # Show progress for X-Learner training
+            with tqdm(total=3, desc="X-Learner training steps") as pbar:
+                # Step 1: Initialize model with simple learner
+                xlearner = BaseXRegressor(learner=base_learner, control_name=0)
+                pbar.update(1)
+                
+                # Step 2: Fit model with simple timeout
+                try:
+                    xlearner.fit(X=X_train_sample.values, treatment=t_train_sample.values, y=y_train_sample.values)
+                except Exception as e:
+                    print(f"  X-Learner fit failed: {e}")
+                    return False
+                
+                pbar.update(1)
+                
+                # Step 3: Predict CATE (uplift)
+                try:
+                    cate_pred = xlearner.predict(X_test.values)
+                    uplift_predictions = cate_pred.flatten() if hasattr(cate_pred, 'flatten') else cate_pred
+                except Exception as e:
+                    print(f"  X-Learner prediction failed: {e}")
+                    return False
+                
+                pbar.update(1)
+            
+            # Calculate metrics
+            predicted_uplift = uplift_predictions.mean()
+            uplift_error = abs(actual_uplift - predicted_uplift)
+            uplift_accuracy = max(0, 1 - uplift_error / abs(actual_uplift)) if actual_uplift != 0 else 0
+            
+            self.models['xlearner'] = xlearner
+            self.results['xlearner'] = {
+                'actual_uplift': actual_uplift,
+                'predicted_uplift': predicted_uplift,
+                'uplift_error': uplift_error,
+                'uplift_accuracy': uplift_accuracy
+            }
+            
+            print(f"  Actual uplift: {actual_uplift:.4f}")
+            print(f"  Predicted uplift: {predicted_uplift:.4f}")
+            print(f"  Uplift error: {uplift_error:.4f}")
+            print(f"  Uplift accuracy: {uplift_accuracy:.2%}")
+            
+        except Exception as e:
+            print(f"  X-Learner training failed: {e}")
+            print("  Skipping X-Learner model")
+            return False
+        
+        return True
     
     def analyze_model_interpretability(self):
         """Analyze model interpretability and feature importance"""

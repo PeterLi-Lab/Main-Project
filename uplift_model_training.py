@@ -25,7 +25,7 @@ class UpliftModelTrainer:
         self.treatment_col = None
         self.scaler = None
         self.pca = None
-
+        
     def load_uplift_data(self, uplift_data_path='uplift_model_data.csv'):
         """Load uplift data and merge with features"""
         print("=== Loading Uplift Data ===")
@@ -68,7 +68,7 @@ class UpliftModelTrainer:
         
         print(f"Final uplift dataset shape: {self.df_uplift.shape}")
         return True
-
+    
     def create_features(self):
         """Create features for uplift modeling with improved engineering"""
         print("\n=== Creating Features ===")
@@ -256,7 +256,7 @@ class UpliftModelTrainer:
         self.feature_columns = top_features
         
         return True
-
+    
     def train_uplift_models(self):
         """Train uplift models using multiple algorithms with better evaluation"""
         print("\n=== Training Uplift Models ===")
@@ -588,7 +588,7 @@ class UpliftModelTrainer:
                     print(f"  {row['feature']}: {row['importance']:.4f}")
         
         return True
-
+    
     def print_results(self):
         """Print uplift model comparison results with improved metrics"""
         print("\n=== Uplift Model Results ===")
@@ -600,7 +600,7 @@ class UpliftModelTrainer:
                     if 'accuracy' in metric or 'correlation' in metric:
                         print(f"  {metric}: {value:.2%}")
                     else:
-                        print(f"  {metric}: {value:.4f}")
+                print(f"  {metric}: {value:.4f}")
                 else:
                     print(f"  {metric}: {value}")
         
@@ -621,7 +621,7 @@ class UpliftModelTrainer:
                 print(f"   Uplift Accuracy: {self.results[best_model]['uplift_accuracy']:.2%}")
         
         return True
-
+    
     def save_models(self, output_dir='models'):
         """Save trained uplift models"""
         print(f"\n=== Saving Uplift Models ===")
@@ -643,7 +643,7 @@ class UpliftModelTrainer:
         print(f"Saved feature columns to {feature_path}")
         
         return True
-
+    
     def run_full_pipeline(self):
         """Run complete uplift model training pipeline"""
         print("=== Uplift Model Training Pipeline ===")

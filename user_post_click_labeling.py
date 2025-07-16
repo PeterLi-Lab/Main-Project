@@ -40,6 +40,12 @@ class UserPostClickLabeling:
         self.df_posts = self.parse_xml(f'{self.data_dir}/Posts.xml')
         self.df_votes = self.parse_xml(f'{self.data_dir}/Votes.xml')
         self.df_comments = self.parse_xml(f'{self.data_dir}/Comments.xml')
+        # 新增：加载PostHistory
+        try:
+            self.df_posthistory = self.parse_xml(f'{self.data_dir}/PostHistory.xml')
+        except Exception as e:
+            print(f"Warning: PostHistory.xml not loaded: {e}")
+            self.df_posthistory = pd.DataFrame()
         
         # Clean posts data
         print("Cleaning posts data...")
@@ -67,6 +73,11 @@ class UserPostClickLabeling:
         # UserId may be null in votes, so only convert non-nulls
         self.df_votes['UserId'] = self.df_votes['UserId'].astype(str, errors='ignore')
         self.df_comments['UserId'] = self.df_comments['UserId'].astype(str)
+        
+        # 新增：PostHistory字段类型转换
+        if not self.df_posthistory.empty:
+            self.df_posthistory['UserId'] = self.df_posthistory['UserId'].astype(str)
+            self.df_posthistory['PostId'] = self.df_posthistory['PostId'].astype(str)
         
         print("Data cleaning completed!")
         return True
@@ -143,90 +154,102 @@ class UserPostClickLabeling:
         return tag_user_dict
     
     def create_positive_samples(self, active_users, upvoted_posts, tag_user_dict, N=5):
-        """Create positive samples for upvoted posts (assign random active users as clickers)"""
-        print(f"\n=== Creating Positive Samples (N={N}) ===")
-        positive_samples = []
-        assigned_users_per_post = dict()
-        
-        # Add progress bar
-        for post_id in tqdm(upvoted_posts, desc="Creating positive samples"):
-            available_users = set(active_users)
-            if len(available_users) >= N:
-                sampled_users = random.sample(list(available_users), N)
-            else:
-                sampled_users = list(available_users)
-            assigned_users_per_post[post_id] = set(sampled_users)
-            for user_id in sampled_users:
-                # Calculate interest_score (same as negative samples)
-                post_row = self.df_posts[self.df_posts['Id'] == post_id]
-                post_tags = set(post_row.iloc[0]['TagList']) if len(post_row) > 0 else set()
-                user_tags = set()
-                for tag in post_tags:
-                    if user_id in tag_user_dict.get(tag, set()):
-                        user_tags.add(tag)
-                interest_score = len(user_tags)
-                positive_samples.append({
-                    'user_id': user_id,
-                    'post_id': post_id,
-                    'is_click': 1,
-                    'interest_score': interest_score
-                })
-        print(f"Created {len(positive_samples)} positive samples")
+        """Create positive samples from Comments.xml + PostHistory.xml (real behaviors)"""
+        print(f"\n=== Creating Positive Samples (Real Behaviors) ===")
+        # 1. Extract positive samples from Comments.xml
+        pos_comments = self.df_comments[['UserId', 'PostId']].dropna()
+        pos_comments['user_id'] = pos_comments['UserId'].astype(str)
+        pos_comments['post_id'] = pos_comments['PostId'].astype(str)
+        pos_comments['is_click'] = 1
+        # 2. Extract positive samples from PostHistory.xml
+        valid_types = ['2', '4', '6', '8']
+        if hasattr(self, 'df_posthistory') and not self.df_posthistory.empty:
+            pos_ph = self.df_posthistory[self.df_posthistory['PostHistoryTypeId'].isin(valid_types)]
+            pos_ph = pos_ph[['UserId', 'PostId']].dropna()
+            pos_ph['user_id'] = pos_ph['UserId'].astype(str)
+            pos_ph['post_id'] = pos_ph['PostId'].astype(str)
+            pos_ph['is_click'] = 1
+        else:
+            pos_ph = pd.DataFrame(columns=['user_id', 'post_id', 'is_click'])
+        # 3. Merge and deduplicate
+        pos_samples = pd.concat([pos_comments[['user_id','post_id','is_click']], pos_ph[['user_id','post_id','is_click']]], ignore_index=True)
+        pos_samples = pos_samples.drop_duplicates()
+        # interest_score optional, can be added later
+        positive_samples = pos_samples.to_dict('records')
+        print(f"Created {len(positive_samples)} positive samples (real behaviors)")
+        # Compatible with subsequent negative sample sampling interface
+        assigned_users_per_post = {}
+        for row in positive_samples:
+            assigned_users_per_post.setdefault(row['post_id'], set()).add(row['user_id'])
         return positive_samples, assigned_users_per_post
 
-    def create_negative_samples(self, active_users, upvoted_posts, tag_user_dict, assigned_users_per_post, N=5, ratio=3):
-        """Create negative samples with optimized interest-based sampling using tag-user index"""
-        print(f"\n=== Creating Negative Samples (N={N}, ratio=1:{ratio}) ===")
-        negative_samples = []
+    def create_negative_samples(self, active_users, upvoted_posts, tag_user_dict, assigned_users_per_post, target_ratio=1):
+        """Create negative samples based on total positive samples count"""
+        print(f"\n=== Creating Negative Samples (target ratio 1:{target_ratio}) ===")
         
-        # Calculate how many negative samples we need per post to achieve 1:ratio
-        negative_samples_per_post = N * ratio
+        # 1. Calculate total negative samples needed
+        total_positive = sum(len(users) for users in assigned_users_per_post.values())
+        target_negative = total_positive * target_ratio
+        print(f"Total positive samples: {total_positive}")
+        print(f"Target negative samples: {target_negative}")
         
-        # Add progress bar for post processing
-        for post_id in tqdm(upvoted_posts, desc="Processing posts for negative samples"):
+        # 2. Collect all negative candidates
+        all_candidates = []
+        for post_id in tqdm(upvoted_posts, desc="Collecting negative candidates"):
             post_row = self.df_posts[self.df_posts['Id'] == post_id]
             if len(post_row) == 0:
                 continue
             post_tags = set(post_row.iloc[0]['TagList'])
             
-            # Use optimized candidate selection based on tag-user index
+            # Get candidate users
             candidate_users = set()
             for tag in post_tags:
                 candidate_users |= tag_user_dict.get(tag, set())
             
-            # Filter to active users only
+            # Filter to active users and exclude assigned positive samples
             candidate_users &= set(active_users)
-            
-            # Exclude users assigned as positive for this post
             candidate_users -= assigned_users_per_post.get(post_id, set())
             
-            # If we have enough candidates, sample them
-            if len(candidate_users) >= negative_samples_per_post:
-                sampled_users = random.sample(list(candidate_users), negative_samples_per_post)
-            else:
-                # If not enough candidates, use all available
-                sampled_users = list(candidate_users)
-            
-            # Add negative samples
-            for user_id in sampled_users:
-                # Calculate interest score for this user-post pair
+            # Calculate interest score for each candidate user
+            for user_id in candidate_users:
                 user_tags = set()
                 for tag in post_tags:
                     if user_id in tag_user_dict.get(tag, set()):
                         user_tags.add(tag)
                 interest_score = len(user_tags)
                 
-                negative_samples.append({
+                all_candidates.append({
                     'user_id': user_id,
                     'post_id': post_id,
-                    'is_click': 0,
                     'interest_score': interest_score
                 })
+        
+        print(f"Total negative candidates: {len(all_candidates)}")
+        
+        # 3. Sort by interest score and sample
+        if len(all_candidates) > target_negative:
+            # Sort by interest score, prioritize high interest matches
+            all_candidates.sort(key=lambda x: x['interest_score'], reverse=True)
+            sampled_candidates = all_candidates[:int(target_negative)]
+        else:
+            # If not enough candidates, use all available
+            sampled_candidates = all_candidates
+            print(f"Warning: Only {len(sampled_candidates)} negative candidates available, less than target {target_negative}")
+        
+        # 4. Convert to negative sample format
+        negative_samples = []
+        for candidate in sampled_candidates:
+            negative_samples.append({
+                'user_id': candidate['user_id'],
+                'post_id': candidate['post_id'],
+                'is_click': 0,
+                'interest_score': candidate['interest_score']
+            })
         
         print(f"Created {len(negative_samples)} negative samples")
         return negative_samples
     
-    def create_user_post_samples(self, N=5, recent_days=30):
+    def create_user_post_samples(self, N=5, recent_days=30, target_ratio=1):
         """Create user-post click samples"""
         print("=== Starting User-Post Click Labeling ===")
         self.load_and_clean_data()
@@ -254,7 +277,7 @@ class UserPostClickLabeling:
             upvoted_posts = set(upvoted_posts_list)
             
         positive_samples, assigned_users_per_post = self.create_positive_samples(active_users, upvoted_posts, tag_user_dict, N)
-        negative_samples = self.create_negative_samples(active_users, upvoted_posts, tag_user_dict, assigned_users_per_post, N, ratio=3)
+        negative_samples = self.create_negative_samples(active_users, upvoted_posts, tag_user_dict, assigned_users_per_post, target_ratio=target_ratio)
         
         all_samples = positive_samples + negative_samples
         self.df_samples = pd.DataFrame(all_samples)
@@ -262,6 +285,7 @@ class UserPostClickLabeling:
         print(f"Total samples: {len(self.df_samples)}")
         print(f"Positive samples: {len(positive_samples)}")
         print(f"Negative samples: {len(negative_samples)}")
+        print(f"Actual ratio: 1:{len(negative_samples)/len(positive_samples):.2f}")
         return self.df_samples
     
     def add_features(self):
@@ -333,12 +357,12 @@ class UserPostClickLabeling:
         
         return True
     
-    def run_full_pipeline(self, N=5, recent_days=30):
+    def run_full_pipeline(self, N=5, recent_days=30, target_ratio=1):
         """Run the complete user-post click labeling pipeline"""
         print("=== User-Post Click Labeling Pipeline ===")
         
         # Create samples
-        self.create_user_post_samples(N, recent_days)
+        self.create_user_post_samples(N, recent_days, target_ratio)
         
         # Add features
         self.add_features()
@@ -355,7 +379,8 @@ class UserPostClickLabeling:
 def main():
     """Main function to run the user-post click labeling pipeline"""
     labeler = UserPostClickLabeling()
-    samples = labeler.run_full_pipeline(N=5, recent_days=30)
+    # Can specify target ratio, such as 1:1, 1:3, etc.
+    samples = labeler.run_full_pipeline(N=5, recent_days=30, target_ratio=3)
     
     return samples
 
