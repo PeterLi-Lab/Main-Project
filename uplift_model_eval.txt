@@ -1,0 +1,4 @@
+Mean predicted uplift: -0.1615
+Top 5% uplift: 0.1894
+Treatment模型: 测试集准确率=0.8220  AUC=0.8766
+Control模型: 测试集准确率=0.8948  AUC=0.9492
