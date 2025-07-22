@@ -21,6 +21,12 @@ This project implements uplift modeling to analyze the effectiveness of AI conte
    - `uplift_predicted_distribution_cluster7_user_post.png`: Uplift distribution plot
    - `uplift_model_eval.txt`: Model accuracy and AUC
 
+### Uplift Calculation Correction (2024)
+- The predicted uplift is now calculated as:
+  **(Mean prediction of the treatment model on the treatment=1 subset) - (Mean prediction of the control model on the control=0 subset)**
+- This corrects the previous approach, which used the mean prediction over the entire test set for both models.
+- This change ensures a more accurate estimation of the true uplift effect for each group.
+
 ### Latest Results (2024)
 - **Mean predicted uplift**: -0.1615
 - **Top 5% uplift**: 0.1894

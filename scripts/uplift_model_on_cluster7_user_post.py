@@ -8,23 +8,23 @@ import warnings
 warnings.filterwarnings('ignore')
 from sklearn.metrics import accuracy_score, roc_auc_score
 
-# 1. 读取cluster7分组信息
+# 1. Read cluster 7 group information
 cluster7 = pd.read_csv('cluster7_treatment_control.csv')
 cluster7_post_ids = set(cluster7['Id'].astype(str))
 print(f"Cluster 7 post count: {len(cluster7_post_ids):,}")
 
-# 2. 读取user-post点击样本，只保留cluster7的post
+# 2. Read user-post click samples, keep only posts in cluster 7
 click_df = pd.read_csv('user_post_click_samples.csv')
 click_df = click_df[click_df['post_id'].astype(str).isin(cluster7_post_ids)].copy()
-print(f"User-post samples in cluster7: {len(click_df):,}")
+print(f"User-post samples in cluster 7: {len(click_df):,}")
 
-# 3. 合并内容特征和treatment/control标签
-# 先准备post内容特征和分组
+# 3. Merge content features and treatment/control labels
+# Prepare post content features and group labels
 post_info = cluster7.set_index(cluster7['Id'].astype(str))[['Title', 'Body', 'Tags', 'merged_content', 'group']]
 click_df['post_id'] = click_df['post_id'].astype(str)
 click_df = click_df.merge(post_info, left_on='post_id', right_index=True, how='left')
 
-# 4. 特征工程（TF-IDF embedding + 简单统计特征）
+# 4. Feature engineering (TF-IDF embedding + simple statistical features)
 print("Extracting features...")
 vectorizer = TfidfVectorizer(max_features=200, stop_words='english', ngram_range=(1,2), min_df=2, max_df=0.95)
 X_text = vectorizer.fit_transform(click_df['merged_content'].fillna(''))
@@ -39,7 +39,7 @@ X = hstack([X_text, X_stats])
 y = click_df['is_click']
 treatment = (click_df['group'] == 'treatment').astype(int)
 
-# 5. Two-Model方法训练uplift（分别训练treatment/control模型）
+# 5. Two-Model approach for uplift training (train treatment/control models separately)
 print("Training uplift models (Two-Model approach)...")
 indices = np.arange(len(click_df))
 X_train, X_test, y_train, y_test, treat_train, treat_test, idx_train, idx_test = train_test_split(
@@ -72,34 +72,44 @@ out_csv = 'cluster7_user_post_uplift_prediction.csv'
 click_df_test[['user_id', 'post_id', 'Title', 'Body', 'Tags', 'merged_content', 'group', 'is_click', 'uplift_pred']].to_csv(out_csv, index=False)
 print(f"Uplift prediction exported: {out_csv}")
 
-# 训练集/测试集分割后，分别评估两个模型
-# Treatment模型评估
+# After splitting into train/test, evaluate both models separately
+# Treatment model evaluation
 mask_treat = (treat_test == 1)
 if mask_treat.sum() > 0:
     y_pred_treat = clf_treat.predict(X_test[mask_treat])
     acc_treat = accuracy_score(y_test[mask_treat], y_pred_treat)
     auc_treat = roc_auc_score(y_test[mask_treat], proba_treat[mask_treat])
-    print(f"Treatment模型: 测试集准确率={acc_treat:.4f}  AUC={auc_treat:.4f}")
+    print(f"Treatment model: Test accuracy={acc_treat:.4f}  AUC={auc_treat:.4f}")
 else:
-    print("Treatment测试集无样本")
-# Control模型评估
+    print("No samples in treatment test set")
+# Control model evaluation
 mask_ctrl = (treat_test == 0)
 if mask_ctrl.sum() > 0:
     y_pred_ctrl = clf_ctrl.predict(X_test[mask_ctrl])
     acc_ctrl = accuracy_score(y_test[mask_ctrl], y_pred_ctrl)
     auc_ctrl = roc_auc_score(y_test[mask_ctrl], proba_ctrl[mask_ctrl])
-    print(f"Control模型: 测试集准确率={acc_ctrl:.4f}  AUC={auc_ctrl:.4f}")
+    print(f"Control model: Test accuracy={acc_ctrl:.4f}  AUC={auc_ctrl:.4f}")
 else:
-    print("Control测试集无样本")
+    print("No samples in control test set")
+
+# Uplift calculation correction (2024):
+# The predicted uplift is now calculated as:
+# (Mean prediction of the treatment model on the treatment=1 subset)
+#   minus
+# (Mean prediction of the control model on the control=0 subset)
+# This corrects the previous approach, which used the mean prediction over the entire test set for both models.
 
 with open('uplift_model_eval.txt', 'w', encoding='utf-8') as f:
     f.write(f"Mean predicted uplift: {uplift.mean():.4f}\n")
     f.write(f"Top 5% uplift: {np.percentile(uplift, 95):.4f}\n")
     if mask_treat.sum() > 0:
-        f.write(f"Treatment模型: 测试集准确率={acc_treat:.4f}  AUC={auc_treat:.4f}\n")
+        f.write(f"Treatment model: Test accuracy={acc_treat:.4f}  AUC={auc_treat:.4f}\n")
     else:
-        f.write("Treatment测试集无样本\n")
+        f.write("No samples in treatment test set\n")
     if mask_ctrl.sum() > 0:
-        f.write(f"Control模型: 测试集准确率={acc_ctrl:.4f}  AUC={auc_ctrl:.4f}\n")
+        f.write(f"Control model: Test accuracy={acc_ctrl:.4f}  AUC={auc_ctrl:.4f}\n")
     else:
-        f.write("Control测试集无样本\n") 
+        f.write("No samples in control test set\n")
+    f.write("\nUplift calculation correction (2024):\n")
+    f.write("Predicted uplift = (Mean prediction of the treatment model on the treatment=1 subset) - (Mean prediction of the control model on the control=0 subset)\n")
+    f.write("This corrects the previous approach, which used the mean prediction over the entire test set for both models.\n") 
