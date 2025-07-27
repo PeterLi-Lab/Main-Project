@@ -1,11 +1,182 @@
 # Project Structure Documentation
 
-## Overview
+## 📋 Recommended Viewing Order
+
+### For New Viewers (Start Here)
+1. **Project Overview** - Understand the main goal and approach
+2. **Latest Results (2024)** - See the current findings and methodology
+3. **Treatment and Control Definition** - Understand the core concept
+4. **Main Data Flow & Scripts** - See the complete pipeline
+5. **Core Modules Documentation** - Detailed explanation of main code files
+6. **Usage Examples** - How to run the project
+7. **Directory Structure** - Complete file organization
+
+### For Technical Users
+1. **Core Modules Documentation** - Start with main implementation
+2. **Main Data Flow & Scripts** - Understand the pipeline
+3. **Latest Results (2024)** - See current methodology
+4. **Treatment and Control Definition** - Understand the approach
+5. **Usage Examples** - How to execute
+6. **Directory Structure** - Complete reference
+
+---
+
+## 🎯 Project Overview
 This project implements uplift modeling to analyze the effectiveness of AI content on user engagement. The project is organized into two main directories: `src/` for core modules and `scripts/` for analysis and utility scripts.
 
 ---
 
-## Latest: Content-Homogeneous Clustering & Real Click Uplift Modeling (2024)
+## 📊 Core Modules Documentation
+
+### Main Execution Files
+
+#### `src/main.py`
+**Purpose**: Main project execution script and entry point
+**Methods**: 
+- Orchestrates the complete uplift modeling pipeline
+- Coordinates data loading, preprocessing, model training, and evaluation
+- Manages configuration and logging
+**Key Features**:
+- Modular execution of different pipeline stages
+- Error handling and validation
+- Results aggregation and reporting
+
+#### `src/uplift_model_training.py`
+**Purpose**: Core uplift model training class with comprehensive functionality
+**Methods**:
+- `load_data()`: Loads and validates input datasets
+- `preprocess_data()`: Handles feature engineering and data cleaning
+- `train_models()`: Trains separate treatment and control models
+- `evaluate_models()`: Calculates accuracy, AUC, and uplift metrics
+- `save_results()`: Exports predictions and evaluation metrics
+**Key Features**:
+- Logistic Regression models for treatment/control groups
+- Cross-validation and hyperparameter tuning
+- Uplift calculation: Treatment predictions - Control predictions
+- Comprehensive evaluation metrics (accuracy, AUC, uplift distribution)
+
+#### `src/data_preprocessing.py`
+**Purpose**: Data preprocessing utilities and feature engineering
+**Methods**:
+- `clean_text()`: Text cleaning and normalization
+- `extract_features()`: Feature extraction from raw data
+- `handle_missing_values()`: Missing data imputation
+- `encode_categorical()`: Categorical variable encoding
+**Key Features**:
+- TF-IDF text vectorization
+- Categorical encoding (one-hot, label encoding)
+- Feature scaling and normalization
+- Outlier detection and handling
+
+#### `src/uplift_model.py`
+**Purpose**: Uplift modeling class with advanced methodologies
+**Methods**:
+- `calculate_uplift()`: Computes uplift scores
+- `validate_assumptions()`: Checks uplift modeling assumptions
+- `balance_groups()`: Ensures treatment/control balance
+**Key Features**:
+- Two-model approach (separate treatment/control models)
+- Uplift score calculation and distribution analysis
+- Assumption validation (SUTVA, unconfoundedness)
+- Group balance checking
+
+#### `src/user_post_click_labeling.py`
+**Purpose**: User-post click labeling and feature engineering
+**Methods**:
+- `label_clicks()`: Creates click labels from user behavior
+- `engineer_features()`: Builds user-post interaction features
+- `merge_data()`: Combines user, post, and click data
+**Key Features**:
+- Real click behavior as response variable (`is_click`)
+- User-post interaction features
+- Temporal feature engineering
+- Behavioral pattern extraction
+
+#### `src/uplift_treatment_labeling.py`
+**Purpose**: Uplift treatment labeling based on tag content
+**Methods**:
+- `create_treatment_labels()`: Creates treatment/control labels
+- `validate_labels()`: Ensures label quality and balance
+- `merge_with_features()`: Combines labels with feature data
+**Key Features**:
+- Treatment definition: Posts tagged as "ai content"
+- Control definition: Similar posts without "ai content" tag
+- Tag-based classification logic
+- Label validation and quality checks
+
+### Key Analysis Scripts
+
+#### `scripts/uplift_model_on_cluster7_user_post.py`
+**Purpose**: Main uplift modeling script with content-homogeneous clustering
+**Methods**:
+- Content-based clustering using TF-IDF + MiniBatchKMeans
+- Treatment/control split within selected clusters
+- User-post level uplift modeling with real click response
+- Model training and evaluation
+**Key Features**:
+- TF-IDF text vectorization for content similarity
+- MiniBatchKMeans clustering for scalability
+- Logistic Regression models for treatment/control
+- Real click behavior as response variable
+- Comprehensive evaluation metrics
+
+#### `scripts/cluster_posts_by_content.py`
+**Purpose**: Content-based clustering of posts using text similarity
+**Methods**:
+- Text preprocessing and TF-IDF vectorization
+- MiniBatchKMeans clustering
+- Cluster analysis and visualization
+- Cluster quality assessment
+**Key Features**:
+- TF-IDF for text representation
+- MiniBatchKMeans for efficient clustering
+- Silhouette score for cluster quality
+- Cluster visualization and analysis
+
+#### `scripts/cluster7_treatment_control_split.py`
+**Purpose**: Treatment/control split within selected content clusters
+**Methods**:
+- Identifies AI-related clusters (high AI keyword density)
+- Splits posts into treatment (AI-tagged) and control (non-AI-tagged)
+- Ensures content similarity between groups
+- Validates group balance and quality
+**Key Features**:
+- AI keyword density analysis
+- Content-homogeneous group selection
+- Treatment/control balance validation
+- Quality metrics for group separation
+
+### Validation and Debugging Scripts
+
+#### `scripts/comprehensive_validation.py`
+**Purpose**: Comprehensive validation for uplift modeling assumptions
+**Methods**:
+- SUTVA assumption checking
+- Unconfoundedness validation
+- Treatment assignment randomness
+- Outcome variable quality assessment
+**Key Features**:
+- Statistical tests for uplift assumptions
+- Data quality validation
+- Model performance assessment
+- Robustness checks
+
+#### `scripts/debug_uplift.py`
+**Purpose**: Debug uplift modeling issues and performance
+**Methods**:
+- Model performance analysis
+- Feature importance assessment
+- Data leakage detection
+- Error analysis and troubleshooting
+**Key Features**:
+- Performance profiling
+- Feature importance ranking
+- Data leakage detection
+- Error diagnosis and resolution
+
+---
+
+## 🚀 Latest: Content-Homogeneous Clustering & Real Click Uplift Modeling (2024)
 
 ### Key Workflow
 1. **Content Clustering**: Use TF-IDF + MiniBatchKMeans to cluster posts by content similarity (`scripts/cluster_posts_by_content.py`). Output: `post_clusters.csv`.
