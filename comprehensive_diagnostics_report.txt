@@ -1,0 +1,18 @@
+=== COMPREHENSIVE UPLIFT DIAGNOSTICS REPORT ===
+
+=== RESIDUAL CONFOUNDING ===
+High confounding risk features: 5
+High moderation risk features: 4
+
+=== SOFT DATA LEAKAGE ===
+High leakage risk features (R² > 0.3): 2
+
+=== WEIGHT DISTRIBUTION ===
+Original ESS ratio: 0.0045
+Tight clipping ESS ratio: 0.4329
+
+=== UPLIFT COMPARISON ===
+Clipping 0.0001: Uplift = -0.7722, ESS ratio = 0.6279
+Clipping 0.01: Uplift = -0.7722, ESS ratio = 0.6279
+Clipping 0.05: Uplift = -0.7722, ESS ratio = 0.6279
+Clipping 0.1: Uplift = -0.7702, ESS ratio = 0.6525

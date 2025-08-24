@@ -1,0 +1,11 @@
+metric,value
+R2_treatment,0.9156293487657345
+R2_control,0.8549967187676318
+IPW_Qini_AUUC,-4.491166422399833
+IPW_Uplift_top20,-0.8936629432953319
+IPW_Random_targeting_uplift,-0.004474275128597854
+IPW_All_users_targeting_uplift,-0.7722391777399752
+IPW_Treatment_rate_top20,0.036623298625258996
+IPW_Control_rate_top20,0.930286241920591
+Treatment_count_top20,3269.0
+Control_count_top20,0.0

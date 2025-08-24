@@ -247,9 +247,9 @@ class AdvancedSimilarityDetection:
         print(f"\nSimilarity gap (treatment - control): {similarity_gap:.3f}")
         
         if abs(similarity_gap) < 0.2:
-            print("✅ Control group is sufficiently similar to treatment group")
+            print("Control group is sufficiently similar to treatment group")
         else:
-            print("⚠️  Control group may not be similar enough to treatment group")
+            print("Control group may not be similar enough to treatment group")
 
 def advanced_similarity_detection():
     """Advanced similarity detection for uplift modeling"""
@@ -267,7 +267,7 @@ def advanced_similarity_detection():
     print(f"Text columns found: {text_columns}")
     
     if not text_columns:
-        print("❌ No text columns found")
+        print("No text columns found")
         return None
     
     # Create initial treatment labels

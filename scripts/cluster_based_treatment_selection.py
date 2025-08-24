@@ -258,7 +258,7 @@ def cluster_based_treatment_selection():
     print(f"Text columns found: {text_columns}")
     
     if not text_columns:
-        print("❌ No text columns found")
+        print("No text columns found")
         return None
     
     # Find tag columns

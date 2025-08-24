@@ -1,0 +1,15 @@
+=== FIXED UPLIFT ANALYSIS REPORT ===
+
+Dataset: 9,963 posts from Cluster 5
+Treatment group: 5,526 posts (55.5%)
+Control group: 4,437 posts (44.5%)
+
+=== UPLIFT RESULTS ===
+Unweighted uplift: -0.1115
+Weighted uplift (IPTW): -0.1016
+95% CI: [-0.1111, -0.0862]
+Significant: Yes
+
+=== USER SEGMENTATION ===
+Total users: 6,510
+All: 6,510 users (100.0%)

@@ -1,0 +1,44 @@
+=== CORRECTED UPLIFT EVALUATION REPORT V2 ===
+
+Dataset: 54,496 exposures from Cluster 5
+Test set: 16,349 exposures
+
+=== MODEL PERFORMANCE ===
+R² (treatment head): 0.9156
+R² (control head): 0.8550
+Qini/AUUC Score: -4.0026
+Uplift@top20%: 0.0385 (3.85%)
+
+=== BASELINE METRICS ===
+Random targeting uplift: 0.0004 (0.04%)
+All-users targeting uplift: -0.7265 (-72.65%)
+
+=== SEGMENT ANALYSIS ===
+Medium-High segment:
+  Count: 4,087
+  Treatment mean: 0.1957
+  Control mean: 1.0000
+  Uplift (absolute): -0.8043 (-80.43%)
+  Uplift (relative): -80.43%
+
+Low segment:
+  Count: 4,088
+  Treatment mean: 0.3415
+  Control mean: 1.0000
+  Uplift (absolute): -0.6585 (-65.85%)
+  Uplift (relative): -65.85%
+
+High segment:
+  Count: 4,087
+  Treatment mean: 0.1714
+  Control mean: 1.0000
+  Uplift (absolute): -0.8286 (-82.86%)
+  Uplift (relative): -82.86%
+
+Medium-Low segment:
+  Count: 4,087
+  Treatment mean: 0.2222
+  Control mean: 1.0000
+  Uplift (absolute): -0.7778 (-77.78%)
+  Uplift (relative): -77.78%
+

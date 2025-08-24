@@ -1,0 +1,28 @@
+=== FINAL CORRECTED UPLIFT ANALYSIS REPORT ===
+
+CRITICAL FIXES APPLIED:
+1. Removed user_engagement (R² = 0.92 - major leakage)
+2. Removed post_popularity (R² = 0.54 - moderate leakage)
+3. Removed click_volume (outcome-derived feature)
+4. Removed user_activity (user aggregation)
+5. Used tighter propensity score clipping (0.05, 0.95)
+
+Dataset: 54,613 exposures from Cluster 5
+Test set: 16,384 exposures
+Treatment imbalance: 86.7% treatment, 13.3% control
+Features used: 6 safe features
+
+=== MODEL PERFORMANCE ===
+R² (treatment head): 0.0079
+R² (control head): 0.3945
+IPW Qini/AUUC Score: -2.6878
+IPW Uplift@top20%: -0.2101 (-21.01%)
+
+=== IPW BASELINE METRICS ===
+IPW All-users targeting uplift: -0.7082 (-70.82%)
+Effective Sample Size (ESS): 8916
+ESS ratio: 0.5442
+
+=== INTERPRETATION ===
+NEGATIVE: The uplift model identifies negative treatment effects
+GOOD: Effective sample size is adequate for reliable inference

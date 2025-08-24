@@ -1,32 +1,120 @@
 # Project Structure Documentation
 
-## 📋 Recommended Viewing Order
+## Recommended Viewing Order
 
 ### For New Viewers (Start Here)
 1. **Project Overview** - Understand the main goal and approach
 2. **Latest Results (2024)** - See the current findings and methodology
-3. **Treatment and Control Definition** - Understand the core concept
-4. **Main Data Flow & Scripts** - See the complete pipeline
-5. **Core Modules Documentation** - Detailed explanation of main code files
-6. **Usage Examples** - How to run the project
-7. **Directory Structure** - Complete file organization
+3. **Two-Stage Analysis** - Understand the refined experimental design
+4. **Treatment and Control Definition** - Understand the core concept
+5. **Main Data Flow & Scripts** - See the complete pipeline
+6. **Core Modules Documentation** - Detailed explanation of main code files
+7. **Usage Examples** - How to run the project
+8. **Directory Structure** - Complete file organization
 
 ### For Technical Users
 1. **Core Modules Documentation** - Start with main implementation
 2. **Main Data Flow & Scripts** - Understand the pipeline
 3. **Latest Results (2024)** - See current methodology
-4. **Treatment and Control Definition** - Understand the approach
-5. **Usage Examples** - How to execute
-6. **Directory Structure** - Complete reference
+4. **Two-Stage Analysis** - Understand the refined approach
+5. **Treatment and Control Definition** - Understand the core concept
+6. **Usage Examples** - How to execute
+7. **Directory Structure** - Complete reference
 
 ---
 
-## 🎯 Project Overview
-This project implements uplift modeling to analyze the effectiveness of AI content on user engagement. The project is organized into two main directories: `src/` for core modules and `scripts/` for analysis and utility scripts.
+## Project Overview
+This project implements uplift modeling to analyze the effectiveness of AI content and AI tags on user engagement. The project uses a two-stage analysis approach to separate the effects of AI tags from AI content type, providing more accurate insights for strategic decision-making.
 
 ---
 
-## 📊 Core Modules Documentation
+## Latest Results (2024)
+
+### Two-Stage Analysis Results
+The project implements a refined two-stage analysis to disentangle confounding effects:
+
+**Stage 1: Tag Effect Analysis**
+- **Tag Uplift Effect**: +0.1561 (statistically significant, p=0.0034)
+- **Method**: Compare AI content with AI tags vs AI content without AI tags
+- **Finding**: AI tags have a positive effect on user engagement within AI content
+
+**Stage 2: Content Type Effect Analysis**
+- **Content Type Effect**: AI content performs worse than non-AI content
+- **Method**: Compare AI content vs non-AI content (ignoring tags)
+- **Finding**: AI content itself needs quality improvement
+
+### Strategic Insights
+1. **Keep AI Tags**: AI tags provide positive uplift and should be maintained
+2. **Improve AI Content Quality**: Focus on enhancing AI content quality rather than tag strategy
+3. **Target High-Engagement Users**: Users with higher AI content engagement show better tag response
+
+---
+
+## Two-Stage Analysis
+
+### Problem Statement
+Traditional uplift analysis confounds two effects:
+- **Tag Effect**: Does adding an AI tag change user behavior?
+- **Content Type Effect**: Does AI content perform differently from non-AI content?
+
+### Solution: Two-Stage Analysis
+
+**Stage 1: Tag Effect (Within AI Content)**
+- **Objective**: Measure the pure effect of AI tags on user behavior
+- **Method**: 
+  - Filter for posts that are inherently AI content (regardless of tag)
+  - Treatment = AI content + AI tag
+  - Control = AI content + no AI tag
+  - Run uplift analysis within similar content
+- **Result**: Isolates tag effect from content type effect
+
+**Stage 2: Content Type Effect (AI vs Non-AI)**
+- **Objective**: Measure which content type performs better
+- **Method**:
+  - Ignore tags, focus on content type
+  - Compare AI content vs non-AI content CTR/Engagement
+  - Use t-test or regression analysis
+- **Result**: Identifies content quality differences
+
+### Implementation
+- **Script**: `scripts/two_stage_analysis.py`
+- **Key Methods**:
+  - `identify_ai_content()`: Detects AI content based on keywords
+  - `identify_ai_tags()`: Detects AI tags
+  - `stage1_tag_effect_analysis()`: Tag effect within AI content
+  - `stage2_content_effect_analysis()`: Content type comparison
+  - `create_similar_content_clusters()`: Content clustering for refined analysis
+
+---
+
+## Tag Uplift User Analysis
+
+### User Characteristics for Positive Tag Uplift
+Analysis of users who show positive response to AI tags (+0.1561 uplift):
+
+**Key User Profiles**:
+1. **High Engagement Users**: Users with higher overall click rates
+2. **AI Content Enthusiasts**: Users with higher AI content engagement rates
+3. **AI Tag Exposed Users**: Users with more exposure to AI tags
+4. **AI Keyword Sensitive**: Users who interact with more AI-related keywords
+
+**Strategic Recommendations**:
+1. Target users with higher AI content engagement
+2. Focus on users who prefer longer, more detailed content
+3. Prioritize users with more AI-related interactions
+4. Use AI tags more prominently for high-engagement users
+
+### Implementation
+- **Script**: `scripts/analyze_tag_uplift_users.py`
+- **Outputs**:
+  - `tag_uplift_user_analysis.csv`: User characteristics comparison
+  - `positive_uplift_users.csv`: Users with positive tag uplift
+  - `negative_uplift_users.csv`: Users with negative tag uplift
+  - `user_segments_with_uplift.csv`: User segments with uplift scores
+
+---
+
+## Core Modules Documentation
 
 ### Main Execution Files
 
@@ -106,6 +194,34 @@ This project implements uplift modeling to analyze the effectiveness of AI conte
 
 ### Key Analysis Scripts
 
+#### `scripts/two_stage_analysis.py`
+**Purpose**: Two-stage analysis to separate tag effects from content effects
+**Methods**:
+- `identify_ai_content()`: Detects AI content based on keywords
+- `identify_ai_tags()`: Detects AI tags
+- `stage1_tag_effect_analysis()`: Tag effect within AI content
+- `stage2_content_effect_analysis()`: Content type comparison
+- `create_similar_content_clusters()`: Content clustering for refined analysis
+**Key Features**:
+- Separates confounding effects (tag vs content)
+- Statistical significance testing
+- Content clustering for refined analysis
+- Strategic recommendations generation
+
+#### `scripts/analyze_tag_uplift_users.py`
+**Purpose**: Analyze user characteristics for positive tag uplift effect
+**Methods**:
+- `create_user_features()`: Creates user-level features
+- `calculate_tag_uplift_by_user()`: Calculates tag uplift for each user
+- `analyze_positive_uplift_users()`: Analyzes positive uplift user characteristics
+- `create_user_segments()`: Creates user segments based on uplift response
+- `generate_insights()`: Generates strategic insights
+**Key Features**:
+- User-level uplift analysis
+- Statistical comparison of user groups
+- User segmentation based on uplift response
+- Actionable strategic recommendations
+
 #### `scripts/uplift_model_on_cluster7_user_post.py`
 **Purpose**: Main uplift modeling script with content-homogeneous clustering
 **Methods**:
@@ -176,36 +292,6 @@ This project implements uplift modeling to analyze the effectiveness of AI conte
 
 ---
 
-## 🚀 Latest: Content-Homogeneous Clustering & Real Click Uplift Modeling (2024)
-
-### Key Workflow
-1. **Content Clustering**: Use TF-IDF + MiniBatchKMeans to cluster posts by content similarity (`scripts/cluster_posts_by_content.py`). Output: `post_clusters.csv`.
-2. **AI Cluster Selection**: Identify clusters with high AI-related keyword density (e.g., Cluster 7).
-3. **Treatment/Control Split**: Within the selected cluster, define:
-   - **Treatment**: Posts tagged as "ai content"
-   - **Control**: Posts in the same cluster but NOT tagged as "ai content"
-   Output: `cluster7_treatment_control.csv`.
-4. **User-Post Level Uplift Modeling**: Merge user click data (`user_post_click_samples.csv`) with cluster info, keeping only posts in the selected cluster. Use `is_click` as the real response variable. Script: `scripts/uplift_model_on_cluster7_user_post.py`.
-5. **Model Training & Evaluation**: Train separate Logistic Regression models for treatment and control, predict uplift, and evaluate accuracy/AUC.
-6. **Outputs**:
-   - `cluster7_user_post_uplift_prediction.csv`: Uplift predictions at user-post level
-   - `uplift_predicted_distribution_cluster7_user_post.png`: Uplift distribution plot
-   - `uplift_model_eval.txt`: Model accuracy and AUC
-
-### Uplift Calculation Correction (2024)
-- The predicted uplift is now calculated as:
-  **(Mean prediction of the treatment model on the treatment=1 subset) - (Mean prediction of the control model on the control=0 subset)**
-- This corrects the previous approach, which used the mean prediction over the entire test set for both models.
-- This change ensures a more accurate estimation of the true uplift effect for each group.
-
-### Latest Results (2024)
-- **Mean predicted uplift**: -0.1615
-- **Top 5% uplift**: 0.1894
-- **Treatment model**: Test accuracy = 0.8220, AUC = 0.8766
-- **Control model**: Test accuracy = 0.8948, AUC = 0.9492
-
----
-
 ## Treatment and Control Definition
 
 **Treatment and Control are defined for uplift modeling:**
@@ -235,6 +321,8 @@ This approach ensures that:
 1. `scripts/cluster_posts_by_content.py` → `post_clusters.csv`
 2. `scripts/cluster7_treatment_control_split.py` → `cluster7_treatment_control.csv`
 3. `scripts/uplift_model_on_cluster7_user_post.py` → `cluster7_user_post_uplift_prediction.csv`, `uplift_predicted_distribution_cluster7_user_post.png`, `uplift_model_eval.txt`
+4. `scripts/two_stage_analysis.py` → Two-stage analysis results
+5. `scripts/analyze_tag_uplift_users.py` → User characteristics analysis
 
 ---
 
@@ -252,6 +340,10 @@ Core functionality modules for uplift modeling and data processing:
 
 ### `scripts/` - Analysis and Utility Scripts
 Scripts for various analyses, debugging, and validation:
+
+#### Two-Stage Analysis Scripts
+- **`two_stage_analysis.py`**: Two-stage analysis to separate tag effects from content effects
+- **`analyze_tag_uplift_users.py`**: Analyze user characteristics for positive tag uplift effect
 
 #### Uplift Modeling Scripts
 - **`uplift_model_on_cluster7_user_post.py`**: Uplift modeling on content-homogeneous cluster with real click response
@@ -292,13 +384,21 @@ Scripts for various analyses, debugging, and validation:
 
 ## Usage
 
-### Recommended Uplift Modeling Pipeline
+### Recommended Analysis Pipeline
 ```bash
-# 1. 内容聚类
+# 1. Two-stage analysis
+python scripts/two_stage_analysis.py
+
+# 2. Tag uplift user analysis
+python scripts/analyze_tag_uplift_users.py
+
+# 3. Content clustering
 python scripts/cluster_posts_by_content.py
-# 2. 选取AI相关簇并分组
+
+# 4. Treatment/control split
 python scripts/cluster7_treatment_control_split.py
-# 3. 合并点击数据并建模
+
+# 5. Uplift modeling
 python scripts/uplift_model_on_cluster7_user_post.py
 ```
 
@@ -317,8 +417,14 @@ python src/main.py
 - **`uplift_model_eval.txt`**: Model accuracy and AUC
 - **`user_post_click_samples.csv`**: User-post click samples
 - **`retention_prediction_data.csv`**: Retention prediction data
+- **`tag_uplift_user_analysis.csv`**: User characteristics comparison
+- **`positive_uplift_users.csv`**: Users with positive tag uplift
+- **`negative_uplift_users.csv`**: Users with negative tag uplift
+- **`user_segments_with_uplift.csv`**: User segments with uplift scores
 
 ## Key Features
+- Two-stage analysis to separate tag effects from content effects
+- User characteristics analysis for positive tag uplift
 - Treatment/Control definition based on tag content containing "ai content" within content-homogeneous clusters
 - Cluster-based treatment selection for accurate uplift modeling
 - Real click (`is_click`) as response for uplift modeling

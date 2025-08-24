@@ -24,10 +24,10 @@ def main():
     missing_cols = [col for col in required_cols if col not in df.columns]
     
     if missing_cols:
-        print(f"❌ Missing required columns: {missing_cols}")
+        print(f"Missing required columns: {missing_cols}")
         return None
     
-    print("✅ All required columns present")
+    print("All required columns present")
     
     # Note: treatment_ai_content is defined based on tag containing 'ai content'
     # - treatment (1): posts with tag containing 'ai content'

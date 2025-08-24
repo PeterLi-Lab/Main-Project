@@ -85,7 +85,7 @@ class UpliftTreatmentLabeling:
         print("Creating user features...")
         
         if 'user_id' not in df.columns:
-            print("❌ No user_id column found")
+            print("No user_id column found")
             return None
         
         user_features = df.groupby('user_id').agg({
@@ -126,7 +126,7 @@ class UpliftTreatmentLabeling:
         print("Creating post features...")
         
         if 'post_id' not in df.columns:
-            print("❌ No post_id column found")
+            print("No post_id column found")
             return None
         
         post_features = df.groupby('post_id').agg({
@@ -213,7 +213,7 @@ class UpliftTreatmentLabeling:
         print("\n=== Uplift Pattern Analysis ===")
         
         if 'treatment_ai_content' not in df.columns or 'response' not in df.columns:
-            print("❌ No treatment or response columns found")
+            print("No treatment or response columns found")
             return
         
         # Treatment distribution

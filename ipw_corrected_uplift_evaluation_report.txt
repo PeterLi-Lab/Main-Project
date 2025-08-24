@@ -1,0 +1,45 @@
+=== IPW-CORRECTED UPLIFT EVALUATION REPORT ===
+
+Dataset: 54,496 exposures from Cluster 5
+Test set: 16,349 exposures
+Treatment imbalance: 86.7% treatment, 13.3% control
+
+=== MODEL PERFORMANCE ===
+R² (treatment head): 0.9156
+R² (control head): 0.8550
+IPW Qini/AUUC Score: -4.4912
+IPW Uplift@top20%: -0.8937 (-89.37%)
+
+=== IPW BASELINE METRICS ===
+IPW Random targeting uplift: -0.0045 (-0.45%)
+IPW All-users targeting uplift: -0.7722 (-77.22%)
+
+=== IPW SEGMENT ANALYSIS ===
+Medium-High segment:
+  Count: 4,087
+  IPW Treatment mean: 0.1486
+  IPW Control mean: 1.0000
+  IPW Uplift (absolute): -0.8514 (-85.14%)
+  IPW Uplift (relative): -85.14%
+
+Low segment:
+  Count: 4,088
+  IPW Treatment mean: 0.3327
+  IPW Control mean: 1.0000
+  IPW Uplift (absolute): -0.6673 (-66.73%)
+  IPW Uplift (relative): -66.73%
+
+High segment:
+  Count: 4,087
+  IPW Treatment mean: 0.2085
+  IPW Control mean: 1.0000
+  IPW Uplift (absolute): -0.7915 (-79.15%)
+  IPW Uplift (relative): -79.15%
+
+Medium-Low segment:
+  Count: 4,087
+  IPW Treatment mean: 0.2239
+  IPW Control mean: 1.0000
+  IPW Uplift (absolute): -0.7761 (-77.61%)
+  IPW Uplift (relative): -77.61%
+

@@ -1,0 +1,21 @@
+=== SIMPLIFIED UPLIFT EVALUATION REPORT ===
+
+Dataset: 9,963 posts from Cluster 5
+Test set: 2,989 posts
+
+=== MODEL PERFORMANCE ===
+R² (treatment head): 1.0000
+R² (control head): 1.0000
+Qini/AUUC Score: -0.6008
+Uplift@top20%: 0.0585
+
+=== BASELINE COMPARISON ===
+Random targeting - Qini: -0.9372
+Random targeting - Uplift@20%: -0.1120
+All-users targeting - Qini: 0.0000
+All-users targeting - Uplift@20%: 0.0000
+
+=== SEGMENT ANALYSIS ===
+High-uplift segment uplift: 0.0286
+Low-uplift segment uplift: 0.0000
+Segment uplift difference: 0.0286

@@ -23,7 +23,7 @@ class UserPostClickLabeling:
         print("Creating user features...")
         
         if 'user_id' not in df.columns:
-            print("❌ No user_id column found")
+            print("No user_id column found")
             return None
         
         user_features = df.groupby('user_id').agg({
@@ -60,7 +60,7 @@ class UserPostClickLabeling:
         print("Creating post features...")
         
         if 'post_id' not in df.columns:
-            print("❌ No post_id column found")
+            print("No post_id column found")
             return None
         
         post_features = df.groupby('post_id').agg({
@@ -159,7 +159,7 @@ class UserPostClickLabeling:
         print("\n=== Click Pattern Analysis ===")
         
         if 'click' not in df.columns:
-            print("❌ No click column found")
+            print("No click column found")
             return
         
         # Overall click rate

@@ -1,0 +1,28 @@
+=== CORRECTED UPLIFT ANALYSIS REPORT V2 ===
+
+Dataset: 54,613 exposures from Cluster 5
+Treatment exposures: 47,344
+Control exposures: 7,269
+
+=== MICRO-AVERAGE RESULTS ===
+Treatment CTR: 0.2006 (20.06%)
+Control CTR: 0.9329 (93.29%)
+Absolute uplift: -0.7322 (-73.22%)
+Relative uplift: -0.7849 (-78.49%)
+Z-statistic: -127.0722
+P-value: 0.000000
+Statistically significant: Yes
+
+=== MACRO-AVERAGE RESULTS ===
+Treatment CTR: 0.6379 (63.79%)
+Control CTR: 0.7031 (70.31%)
+Absolute uplift: -0.0652 (-6.52%)
+Relative uplift: -0.0928 (-9.28%)
+T-statistic: -19.0214
+P-value: 0.000000
+Statistically significant: Yes
+
+=== CONSISTENCY CHECK ===
+Micro-average direction: negative
+Macro-average direction: negative
+Directions consistent: Yes
